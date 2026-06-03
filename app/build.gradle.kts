@@ -31,9 +31,7 @@ android {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
-    kotlinOptions {
-        jvmTarget = "11"
-    }
+    
     buildFeatures {
         compose = true
     }
@@ -57,5 +55,9 @@ dependencies {
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     debugImplementation(libs.androidx.compose.ui.tooling)
-    debugImplementation(libs.androidx.compose.ui.test-manifest)
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
+}
+
+kotlin {
+    jvmToolchain(11)
 }
