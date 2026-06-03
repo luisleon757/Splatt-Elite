@@ -18,14 +18,16 @@ import com.splatt.elite.ui.theme.AccentColor
 @Composable
 fun SettingsDialog(
     status: SplattStatus,
+    currentDistance: Float,
+    currentLens: Float,
     onDismiss: () -> Unit,
     onSaveSettings: (exposure: Int, gain: Int, distance: Float, lens: Float, sensitivity: Int, sound: Int) -> Unit,
     onAdjustFocus: () -> Unit
 ) {
-    var exposure by remember { mutableStateOf(status.v.coerceIn(10, 1200)) } // Temporary assignment for init or custom local fields
-    var gain by remember { mutableStateOf(status.sd.coerceIn(0, 30)) } // Placeholders for sliders
-    var distance by remember { mutableFloatStateOf(status.dist) }
-    var lens by remember { mutableFloatStateOf(status.lens) }
+    var exposure by remember { mutableStateOf(status.v.coerceIn(10, 1200)) }
+    var gain by remember { mutableStateOf(status.s.coerceIn(0, 30)) } // v and s used as placeholders
+    var distance by remember { mutableFloatStateOf(currentDistance) }
+    var lens by remember { mutableFloatStateOf(currentLens) }
     var sensitivity by remember { mutableIntStateOf(9) }
     var soundSensitivity by remember { mutableIntStateOf(8) }
 

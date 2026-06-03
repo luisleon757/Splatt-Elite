@@ -1,5 +1,6 @@
 package com.splatt.elite
 
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -21,6 +22,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.FileProvider
 import com.splatt.elite.network.SplattApiClient
 import com.splatt.elite.network.SplattStatus
 import com.splatt.elite.ui.components.CalibrationDPad
@@ -37,6 +39,11 @@ import com.splatt.elite.ui.theme.RedActive
 import com.splatt.elite.ui.theme.SplattEliteTheme
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.io.File
+import java.io.FileWriter
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -64,13 +71,24 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     
+    // Preferences for local state
+    val prefs = context.getSharedPreferences("splatt_prefs", Context.MODE_PRIVATE)
+    
     // API Client configuration
-    var espIp by remember { mutableStateOf("192.168.4.1") }
+    var espIp by remember { mutableStateOf(prefs.getString("esp_ip", "192.168.4.1") ?: "192.168.4.1") }
     val apiClient = remember { SplattApiClient(espIp) }
     
     // Device state
     var status by remember { mutableStateOf(SplattStatus()) }
     var isConnected by remember { mutableStateOf(false) }
+    
+    // Local App State (migrated from ESP32)
+    var calibX by remember { mutableFloatStateOf(prefs.getFloat("calib_x", 0.0f)) }
+    var calibY by remember { mutableFloatStateOf(prefs.getFloat("calib_y", 0.0f)) }
+    var distM by remember { mutableFloatStateOf(prefs.getFloat("dist", 10.0f)) }
+    var lensMm by remember { mutableFloatStateOf(prefs.getFloat("lens", 25.0f)) }
+    
+    var localScore by remember { mutableFloatStateOf(0.0f) }
     
     // Zoom and local lists
     var uiZoom by remember { mutableStateOf(1.0f) }
@@ -93,21 +111,34 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
     // Connect & Polling Loop
     LaunchedEffect(espIp) {
         apiClient.updateBaseUrl(espIp)
+        var lastState = 0
+        
         while (true) {
             apiClient.fetchStatus(
                 onSuccess = { newStatus ->
                     isConnected = true
                     
-                    // Detect changes in shot count to sync list of shots
-                    if (newStatus.shotNum != status.shotNum || newStatus.state == 0 && status.state == 2) {
-                        // If shot count changed, or we reset, fetch history or clear
-                        if (newStatus.shotNum == 0) {
-                            shots.clear()
-                            trace.clear()
-                        } else if (newStatus.shotNum > shots.size) {
-                            // Add the new shot location
-                            shots.add(ShotPoint(newStatus.shotX, newStatus.shotY, "${newStatus.score}"))
-                        }
+                    // Shot detection logic: Transition from 1 (Aiming) or 0 (Standby if missed) to 2 (Post-Shot)
+                    if (newStatus.state == 2 && lastState != 2) {
+                        // Calculate score locally
+                        val cx = newStatus.shotX - 160.0f - calibX
+                        val cy = newStatus.shotY - 120.0f - calibY
+                        val distPixels = kotlin.math.sqrt((cx * cx) + (cy * cy))
+                        
+                        val pEff = 0.00896f
+                        val focalLengthPx = lensMm / pEff
+                        val scaleFactor = (distM * 1000.0f) / focalLengthPx
+                        
+                        val calculatedScore = 10.9f - ((distPixels * scaleFactor) / 8.0f)
+                        localScore = calculatedScore.coerceAtLeast(0.0f)
+                        
+                        // Add to shots list
+                        shots.add(ShotPoint(newStatus.shotX, newStatus.shotY, String.format(Locale.US, "%.1f", localScore)))
+                    }
+
+                    // Handle reset
+                    if (newStatus.state == 1 && lastState == 0 && shots.isNotEmpty()) {
+                        // Just a clean state transition to Aiming, we might want to clear shots manually later
                     }
 
                     // Update trace
@@ -122,6 +153,7 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                         }
                     }
 
+                    lastState = newStatus.state
                     status = newStatus
                 },
                 onFailure = {
@@ -129,6 +161,40 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                 }
             )
             delay(150) // poll frequency
+        }
+    }
+
+    fun exportToCsv() {
+        if (shots.isEmpty()) {
+            Toast.makeText(context, "No hay disparos para exportar", Toast.LENGTH_SHORT).show()
+            return
+        }
+        
+        try {
+            val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+            val filename = "Splatt_Session_$timestamp.csv"
+            val file = File(context.cacheDir, filename)
+            val writer = FileWriter(file)
+            
+            writer.append("Numero,X_Raw,Y_Raw,Puntuacion\n")
+            shots.forEachIndexed { index, shot ->
+                writer.append("${index + 1},${shot.x},${shot.y},${shot.score}\n")
+            }
+            writer.flush()
+            writer.close()
+            
+            val uri = FileProvider.getUriForFile(context, "${context.packageName}.provider", file)
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = "text/csv"
+                putExtra(Intent.EXTRA_SUBJECT, "Sesión Splatt Elite")
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(Intent.createChooser(intent, "Exportar Sesión"))
+            
+        } catch (e: Exception) {
+            Toast.makeText(context, "Error exportando CSV", Toast.LENGTH_SHORT).show()
+            e.printStackTrace()
         }
     }
 
@@ -236,10 +302,10 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                     currentLaserX = status.x,
                     currentLaserY = status.y,
                     isLaserVisible = (status.v > 0),
-                    calibX = status.cx,
-                    calibY = status.cy,
-                    distanceM = status.dist,
-                    lensMm = status.lens,
+                    calibX = calibX,
+                    calibY = calibY,
+                    distanceM = distM,
+                    lensMm = lensMm,
                     shots = shots,
                     trace = trace
                 )
@@ -251,27 +317,44 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                         .padding(12.dp)
                 ) {
                     Text(
-                        text = if (status.score > 0) String.format("%.1f", status.score) else "0.0",
+                        text = if (localScore > 0) String.format(Locale.US, "%.1f", localScore) else "0.0",
                         fontSize = 48.sp,
                         fontWeight = FontWeight.ExtraBold,
                         color = GreenActive
                     )
                 }
 
-                // Shots Count badge
-                Box(
+                // Shots Count badge & Reset Button
+                Row(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
-                        .padding(12.dp)
-                        .background(PanelBg.copy(alpha = 0.8f), RoundedCornerShape(8.dp))
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                        .padding(12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = "Disparos: ${status.shotNum}",
-                        color = Color.White,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 14.sp
-                    )
+                    if (shots.isNotEmpty()) {
+                        Button(
+                            onClick = { shots.clear(); localScore = 0.0f },
+                            colors = ButtonDefaults.buttonColors(containerColor = RedActive),
+                            contentPadding = PaddingValues(horizontal = 8.dp),
+                            modifier = Modifier.height(32.dp)
+                        ) {
+                            Text("Borrar", fontSize = 12.sp)
+                        }
+                    }
+                    
+                    Box(
+                        modifier = Modifier
+                            .background(PanelBg.copy(alpha = 0.8f), RoundedCornerShape(8.dp))
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = "Disparos: ${shots.size}",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp
+                        )
+                    }
                 }
             }
 
@@ -286,12 +369,12 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Manual Calibration D-Pad
+                // Manual Calibration D-Pad (local app state update)
                 CalibrationDPad(
-                    onMoveUp = { apiClient.executeGet("/set_calib", mapOf("y" to "-0.5")) {} },
-                    onMoveDown = { apiClient.executeGet("/set_calib", mapOf("y" to "0.5")) {} },
-                    onMoveLeft = { apiClient.executeGet("/set_calib", mapOf("x" to "-0.5")) {} },
-                    onMoveRight = { apiClient.executeGet("/set_calib", mapOf("x" to "0.5")) {} }
+                    onMoveUp = { calibY -= 0.5f; prefs.edit().putFloat("calib_y", calibY).apply() },
+                    onMoveDown = { calibY += 0.5f; prefs.edit().putFloat("calib_y", calibY).apply() },
+                    onMoveLeft = { calibX -= 0.5f; prefs.edit().putFloat("calib_x", calibX).apply() },
+                    onMoveRight = { calibX += 0.5f; prefs.edit().putFloat("calib_x", calibX).apply() }
                 )
 
                 // Action Buttons
@@ -316,7 +399,7 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                             colors = ButtonDefaults.buttonColors(containerColor = RedActive),
                             modifier = Modifier.fillMaxWidth().height(48.dp)
                         ) {
-                            Text("❌ Cancelar (${String.format("%.1fs", status.time / 1000f)})", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            Text("❌ Cancelar", fontWeight = FontWeight.Bold, fontSize = 14.sp)
                         }
                     }
 
@@ -370,14 +453,11 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                         }
 
                         Button(
-                            onClick = {
-                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse("${apiClient.getBaseUrl()}/history"))
-                                context.startActivity(intent)
-                            },
+                            onClick = { exportToCsv() },
                             modifier = Modifier.weight(1f),
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2ECC71), contentColor = Color.White)
                         ) {
-                            Text("📥 Historial")
+                            Text("📥 Exportar CSV")
                         }
                     }
                 }
@@ -388,18 +468,26 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
         if (showSettings) {
             SettingsDialog(
                 status = status,
+                currentDistance = distM,
+                currentLens = lensMm,
                 onDismiss = { showSettings = false },
                 onSaveSettings = { exposure, gain, distance, lens, sensitivity, sound ->
-                    // Call /set endpoint to update ESP32 settings
+                    // Save local variables
+                    distM = distance
+                    lensMm = lens
+                    prefs.edit()
+                        .putFloat("dist", distance)
+                        .putFloat("lens", lens)
+                        .apply()
+                        
+                    // Send ESP32 variables
                     apiClient.executeGet(
                         "/set",
                         mapOf(
-                            "exposure" to exposure.toString(),
+                            "exp" to exposure.toString(),
                             "gain" to gain.toString(),
-                            "distance" to distance.toString(),
-                            "lens" to lens.toString(),
-                            "threshold" to ((11 - sensitivity) * 5).toString(), // convert level 1-10 to ESP32 range
-                            "sound" to (sound * 250).toString() // convert sound level to ESP32 threshold
+                            "thr" to ((11 - sensitivity) * 5).toString(),
+                            "snd" to (sound * 250).toString()
                         )
                     ) {
                         Toast.makeText(context, "Ajustes enviados", Toast.LENGTH_SHORT).show()
@@ -440,6 +528,7 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                     TextButton(
                         onClick = {
                             espIp = tempIp
+                            prefs.edit().putString("esp_ip", tempIp).apply()
                             showIpConfig = false
                         }
                     ) {

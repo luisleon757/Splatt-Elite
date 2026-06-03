@@ -11,21 +11,14 @@ import java.util.concurrent.TimeUnit
 
 data class SplattStatus(
     val state: Int = 0,
-    val sd: Int = 0,
-    val shotNum: Int = 0,
     val shotX: Float = 0.0f,
     val shotY: Float = 0.0f,
-    val score: Float = 0.0f,
     val time: Long = 0,
     val x: Float = 0.0f,
     val y: Float = 0.0f,
     val v: Int = 0,
     val s: Int = 0,
-    val c: Int = 0,
-    val cx: Float = 0.0f,
-    val cy: Float = 0.0f,
-    val dist: Float = 10.0f,
-    val lens: Float = 25.0f
+    val c: Int = 0
 )
 
 class SplattApiClient(private var baseUrl: String = "http://192.168.4.1") {
@@ -111,21 +104,14 @@ class SplattApiClient(private var baseUrl: String = "http://192.168.4.1") {
 
         return SplattStatus(
             state = map["state"]?.toIntOrNull() ?: 0,
-            sd = map["sd"]?.toIntOrNull() ?: 0,
-            shotNum = map["shot_num"]?.toIntOrNull() ?: 0,
             shotX = map["shot_x"]?.toFloatOrNull() ?: 0.0f,
             shotY = map["shot_y"]?.toFloatOrNull() ?: 0.0f,
-            score = map["score"]?.toFloatOrNull() ?: 0.0f,
             time = map["time"]?.toLongOrNull() ?: 0,
             x = map["x"]?.toFloatOrNull() ?: 0.0f,
             y = map["y"]?.toFloatOrNull() ?: 0.0f,
             v = map["v"]?.toIntOrNull() ?: 0,
             s = map["s"]?.toIntOrNull() ?: 0,
-            c = map["c"]?.toIntOrNull() ?: 0,
-            cx = map["cx"]?.toFloatOrNull() ?: 0.0f,
-            cy = map["cy"]?.toFloatOrNull() ?: 0.0f,
-            dist = map["dist"]?.toFloatOrNull() ?: 10.0f,
-            lens = map["lens"]?.toFloatOrNull() ?: 25.0f
+            c = map["c"]?.toIntOrNull() ?: 0
         )
     }
 }
