@@ -178,7 +178,7 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
             
             writer.append("Numero,X_Raw,Y_Raw,Puntuacion\n")
             shots.forEachIndexed { index, shot ->
-                writer.append("${index + 1},${shot.x},${shot.y},${shot.score}\n")
+                writer.append("${index + 1},${shot.x},${shot.y},${shot.label}\n")
             }
             writer.flush()
             writer.close()
