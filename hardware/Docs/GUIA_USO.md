@@ -70,19 +70,20 @@ Dado que el dispositivo no transmite un flujo de video continuo para ahorrar bat
 
 ### 3. Calibración del Punto de Impacto
 Para asegurar que tus disparos virtuales se correspondan exactamente con tus miras físicas:
-- **Calibración Manual**: Utiliza el D-Pad de la aplicación para mover las coordenadas del centro de la diana digital hacia arriba, abajo, izquierda o derecha.
-- **Calibración por Disparo**: Activa el modo de calibración en la app, apunta rigurosamente al centro de la diana física (el 10) y realiza un disparo. La aplicación calculará la desviación y la aplicará como compensación (`calib_x`, `calib_y`) a todos los disparos futuros.
+- **Calibración Manual**: Utiliza el D-Pad de la aplicación para mover las coordenadas del centro de la diana digital hacia arriba, abajo, izquierda o derecha de forma visual basándote en dónde caen los impactos.
+- *Nota:* La calibración fina se realiza exclusivamente de forma manual desde el D-Pad observando la agrupación (la función de calibración con un solo disparo no está activa en la app Android para evitar errores por gatillazos).
 
 ### 4. Sesión de Entrenamiento y HUD
-- **Traza de Apuntado**: La aplicación dibuja una traza (línea continua) que muestra el movimiento del arma durante los segundos previos al disparo. Esto te permite analizar tu estabilidad de parado.
+- **Traza de Apuntado (Colores)**: La aplicación dibuja una traza que muestra el movimiento del arma. El color de la línea cambia según el tiempo que lleves apuntando: Verde (hasta 4s), Naranja (hasta 8s), Azul Oscuro (hasta 12s) y Rojo (más de 12s), ayudando a visualizar la fatiga o exceso de tiempo.
 - **Puntuación ISSF**: El sistema calcula la puntuación en base a las coordenadas exactas de impacto, con precisión decimal (p.ej., `10.9` para un centro perfecto).
-- **Guardado y Sesiones**: Todos los datos se almacenan directamente en la base de datos local del móvil o en archivos exportables.
+- **Guardado y Sesiones (CSV)**: Todos los datos (número de disparo, coordenadas raw y puntuación) de la sesión se almacenan en la app y pueden exportarse a un archivo **.csv** universal usando el botón **📥 Exportar CSV**.
 
-### 5. Ajustes de Sensibilidad y Exposición
-A través del menú de configuración en la app, puedes ajustar los parámetros internos del ESP32 en tiempo real:
+### 5. Ajustes de Sensibilidad, Distancia y Exposición
+A través del menú de configuración en la app, puedes ajustar los parámetros en tiempo real:
+- **Distancia a la diana y Lente**: Puedes ajustar de forma variable (mediante deslizadores) la distancia física a la diana (1 a 25 metros) y la distancia focal de tu lente (ej. 25mm). La aplicación escalará matemáticamente el tamaño de la diana para mantener una medición ISSF perfecta sin importar dónde te coloques.
 - **Sensibilidad del Láser (detect_threshold)**: Umbral mínimo de brillo para que un punto sea considerado láser. Auméntalo si hay reflejos del sol o luces de la habitación que causen falsas detecciones.
 - **Exposición de la Cámara (cam_exposure)**: Tiempo de exposición del sensor (en ms). Un valor bajo oscurece la imagen de fondo de modo que solo el punto brillante del láser sea visible.
-- **Sensibilidad de Sonido (audio_threshold)**: Umbral del volumen del micrófono PDM para activar el disparo. Debe ajustarse para captar el clic del percutor o percusión del arma sin dispararse por ruidos de conversación o ambientales.
+- **Sensibilidad de Sonido (audio_threshold)**: Nivel *mínimo* de volumen del micrófono para activar el disparo. *Nota: No existe un umbral máximo, por lo que cualquier ruido que supere este umbral activará el disparo.* Debe ajustarse lo suficientemente alto para evitar ruidos ambientales, pero lo suficientemente bajo para captar el clic mecánico del arma.
 
 ---
 
