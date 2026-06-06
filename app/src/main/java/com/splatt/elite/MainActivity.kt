@@ -225,13 +225,21 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
             writer.close()
             
             val uri = FileProvider.getUriForFile(context, "${context.packageName}.provider", file)
-            val intent = Intent(Intent.ACTION_SEND).apply {
-                type = "text/csv"
-                putExtra(Intent.EXTRA_SUBJECT, "Sesión Splatt Elite")
-                putExtra(Intent.EXTRA_STREAM, uri)
+            val viewIntent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "text/csv")
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
-            context.startActivity(Intent.createChooser(intent, "Exportar Sesión"))
+            try {
+                context.startActivity(viewIntent)
+            } catch (e: android.content.ActivityNotFoundException) {
+                val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                    type = "text/csv"
+                    putExtra(Intent.EXTRA_SUBJECT, "Sesión Splatt Elite")
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                context.startActivity(Intent.createChooser(shareIntent, "Exportar Sesión"))
+            }
             
         } catch (e: Exception) {
             Toast.makeText(context, "Error exportando CSV", Toast.LENGTH_SHORT).show()
