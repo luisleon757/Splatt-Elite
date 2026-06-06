@@ -1,8 +1,7 @@
 package com.splatt.elite.ui.components
 
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import androidx.compose.foundation.Image
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -11,49 +10,48 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.splatt.elite.ui.theme.AccentColor
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import java.io.InputStream
-import java.net.HttpURLConnection
-import java.net.URL
 
 @Composable
 fun FocusDialog(
-    baseUrl: String,
+    focusValue: Int,
+    onStartFocus: () -> Unit,
+    onStopFocus: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    var cameraBitmap by remember { mutableStateOf<Bitmap?>(null) }
-    var statusText by remember { mutableStateOf("Conectando con cámara...") }
-    val coroutineScope = rememberCoroutineScope()
+    var maxFocusSeen by remember { mutableStateOf(10) }
 
-    // Periodically fetch frame
-    LaunchedEffect(key1 = baseUrl) {
-        coroutineScope.launch {
-            while (true) {
-                val result = fetchCameraFrame("$baseUrl/capture")
-                if (result != null) {
-                    cameraBitmap = result
-                    statusText = "Transmitiendo en vivo"
-                } else {
-                    statusText = "Error de conexión con la cámara"
-                }
-                delay(250) // 4 FPS is enough for lens focusing and lightweight for ESP32S3
-            }
+    // Start focus mode when dialog opens, stop when closes
+    DisposableEffect(Unit) {
+        onStartFocus()
+        onDispose {
+            onStopFocus()
         }
     }
+
+    // Keep track of the maximum value seen to scale the gauge
+    LaunchedEffect(focusValue) {
+        if (focusValue > maxFocusSeen) {
+            maxFocusSeen = focusValue
+        }
+    }
+
+    val progress = if (maxFocusSeen > 0) (focusValue.toFloat() / maxFocusSeen.toFloat()).coerceIn(0f, 1f) else 0f
+    val animatedProgress by animateFloatAsState(targetValue = progress, label = "focusProgress")
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
             Text(
-                "Enfoque de Cámara",
+                "Enfoque de Cámara (Ciego)",
                 style = MaterialTheme.typography.titleLarge,
                 color = AccentColor
             )
@@ -64,40 +62,54 @@ fun FocusDialog(
                     .fillMaxWidth()
                     .padding(vertical = 8.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 Text(
-                    "Gira la lente M12 físicamente hasta que la imagen se vea nítida.",
+                    "Gira la lente lentamente. Busca el valor máximo posible en el medidor para lograr la mayor nitidez.",
                     style = MaterialTheme.typography.bodySmall,
-                    color = Color.LightGray
+                    color = Color.Gray,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
                 )
 
                 Box(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .aspectRatio(4f / 3f)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(Color.Black),
+                        .size(160.dp)
+                        .padding(16.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    val bmp = cameraBitmap
-                    if (bmp != null) {
-                        Image(
-                            bitmap = bmp.asImageBitmap(),
-                            contentDescription = "Stream",
-                            modifier = Modifier.fillMaxSize(),
-                            contentScale = ContentScale.Fit
+                    // Background Arc
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        drawArc(
+                            color = Color.DarkGray,
+                            startAngle = 135f,
+                            sweepAngle = 270f,
+                            useCenter = false,
+                            style = Stroke(width = 16.dp.toPx(), cap = StrokeCap.Round)
                         )
-                    } else {
-                        CircularProgressIndicator(color = AccentColor)
+                        // Foreground Arc
+                        drawArc(
+                            color = if (animatedProgress > 0.8f) Color(0xFF2ECC71) else AccentColor,
+                            startAngle = 135f,
+                            sweepAngle = 270f * animatedProgress,
+                            useCenter = false,
+                            style = Stroke(width = 16.dp.toPx(), cap = StrokeCap.Round)
+                        )
+                    }
+                    
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = "$focusValue",
+                            fontSize = 32.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "MAX: $maxFocusSeen",
+                            fontSize = 12.sp,
+                            color = Color.Gray
+                        )
                     }
                 }
-
-                Text(
-                    statusText,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (cameraBitmap != null) Color(0xFF2ECC71) else Color(0xFFE74C3C)
-                )
             }
         },
         confirmButton = {
@@ -106,32 +118,4 @@ fun FocusDialog(
             }
         }
     )
-}
-
-suspend fun fetchCameraFrame(urlString: String): Bitmap? {
-    return withContext(Dispatchers.IO) {
-        var connection: HttpURLConnection? = null
-        var inputStream: InputStream? = null
-        try {
-            val url = URL(urlString)
-            connection = url.openConnection() as HttpURLConnection
-            connection.connectTimeout = 1500
-            connection.readTimeout = 1500
-            connection.requestMethod = "GET"
-            connection.connect()
-
-            if (connection.responseCode == HttpURLConnection.HTTP_OK) {
-                inputStream = connection.inputStream
-                BitmapFactory.decodeStream(inputStream)
-            } else {
-                null
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-            null
-        } finally {
-            inputStream?.close()
-            connection?.disconnect()
-        }
-    }
 }

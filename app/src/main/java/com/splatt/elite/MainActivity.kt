@@ -7,8 +7,11 @@ import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -23,13 +26,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
-import com.splatt.elite.network.SplattApiClient
+import com.splatt.elite.network.BleManager
 import com.splatt.elite.network.SplattStatus
 import com.splatt.elite.ui.components.CalibrationDPad
 import com.splatt.elite.ui.components.FocusDialog
 import com.splatt.elite.ui.components.SettingsDialog
 import com.splatt.elite.ui.components.ShotPoint
 import com.splatt.elite.ui.components.TargetView
+import com.splatt.elite.ui.components.TracePoint
 import com.splatt.elite.ui.theme.AccentColor
 import com.splatt.elite.ui.theme.DarkBg
 import com.splatt.elite.ui.theme.GlassBg
@@ -71,97 +75,125 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     
-    // Preferences for local state
     val prefs = context.getSharedPreferences("splatt_prefs", Context.MODE_PRIVATE)
     
-    // API Client configuration
-    var espIp by remember { mutableStateOf(prefs.getString("esp_ip", "192.168.4.1") ?: "192.168.4.1") }
-    val apiClient = remember { SplattApiClient(espIp) }
+    // BLE Manager
+    val bleManager = remember { BleManager(context) }
     
-    // Device state
-    var status by remember { mutableStateOf(SplattStatus()) }
-    var isConnected by remember { mutableStateOf(false) }
+    // Observers from BLE
+    val status by bleManager.statusFlow.collectAsState()
+    val isConnected by bleManager.connectionState.collectAsState()
+    val isScanning by bleManager.isScanningState.collectAsState()
     
-    // Local App State (migrated from ESP32)
+    // Local App State
     var calibX by remember { mutableFloatStateOf(prefs.getFloat("calib_x", 0.0f)) }
     var calibY by remember { mutableFloatStateOf(prefs.getFloat("calib_y", 0.0f)) }
     var distM by remember { mutableFloatStateOf(prefs.getFloat("dist", 10.0f)) }
     var lensMm by remember { mutableFloatStateOf(prefs.getFloat("lens", 25.0f)) }
+    var currentSensitivity by remember { mutableIntStateOf(prefs.getInt("sensitivity", 9)) }
+    var currentSound by remember { mutableIntStateOf(prefs.getInt("sound", 8)) }
+    var currentExposure by remember { mutableIntStateOf(prefs.getInt("exposure", 300)) }
+    var currentGain by remember { mutableIntStateOf(prefs.getInt("gain", 0)) }
     
     var localScore by remember { mutableFloatStateOf(0.0f) }
+    var isCalibrating by remember { mutableStateOf(false) }
     
     // Zoom and local lists
     var uiZoom by remember { mutableStateOf(1.0f) }
     val shots = remember { mutableStateListOf<ShotPoint>() }
-    val trace = remember { mutableStateListOf<Offset>() }
+    val trace = remember { mutableStateListOf<TracePoint>() }
     
     // Dialog control
     var showSettings by remember { mutableStateOf(false) }
     var showFocus by remember { mutableStateOf(false) }
-    var showIpConfig by remember { mutableStateOf(false) }
 
-    // State labels mapping
+    // Permissions logic
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val allGranted = permissions.entries.all { it.value }
+        if (allGranted) {
+            bleManager.startScan()
+        } else {
+            Toast.makeText(context, "Se requieren permisos para buscar la cámara", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        val permissionsToRequest = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            arrayOf(
+                android.Manifest.permission.BLUETOOTH_SCAN,
+                android.Manifest.permission.BLUETOOTH_CONNECT
+            )
+        } else {
+            arrayOf(
+                android.Manifest.permission.ACCESS_FINE_LOCATION
+            )
+        }
+        permissionLauncher.launch(permissionsToRequest)
+    }
+
+    // Shot logic (when status changes)
+    var lastState by remember { mutableIntStateOf(0) }
+    LaunchedEffect(status) {
+        if (status.state == 2 && lastState != 2) {
+            // Calculate score locally
+            val cx = status.shotX - 160.0f - calibX
+            val cy = status.shotY - 120.0f - calibY
+            val distPixels = kotlin.math.sqrt((cx * cx) + (cy * cy))
+            
+            val pEff = 0.00896f
+            val focalLengthPx = lensMm / pEff
+            val scaleFactor = (distM * 1000.0f) / focalLengthPx
+            
+            val calculatedScore = 10.9f - ((distPixels * scaleFactor) / 8.0f)
+            localScore = calculatedScore.coerceAtLeast(0.0f)
+            
+            shots.add(ShotPoint(status.shotX, status.shotY, String.format(Locale.US, "%.1f", localScore)))
+        }
+
+        // Clear trace only when starting a new shot (entering state 1)
+        if (status.state == 1 && lastState != 1) {
+            trace.clear()
+        }
+
+        if (status.state == 1 || status.state == 2) { // Apuntando o Post-Disparo
+            if (status.v > 0) {
+                val traceColor = when {
+                    isCalibrating -> Color.Green
+                    status.state == 2 -> Color.Green // post-disparo
+                    status.state == 1 -> {
+                        when {
+                            status.time < 4000 -> Color.Green
+                            status.time < 8000 -> Color(0xFFE67E22) // Calabaza / Orange
+                            status.time < 12000 -> Color(0xFF1B4F72) // Azul oscuro / Dark Blue
+                            else -> Color.Red
+                        }
+                    }
+                    else -> Color.Green
+                }
+                
+                trace.add(TracePoint(status.x, status.y, traceColor))
+                // Se incrementa el límite a 5000 para no borrar la traza entera
+                if (trace.size > 5000) {
+                    trace.removeAt(0)
+                }
+            }
+        }
+
+        if (status.state == 0) {
+            isCalibrating = false // reset if it went to standby
+        }
+        
+        lastState = status.state
+    }
+
     val stateText = when (status.state) {
         0 -> "STANDBY"
         1 -> "APUNTANDO"
         2 -> "POST-DISPARO"
+        3 -> "ENFOQUE"
         else -> "DESCONOCIDO"
-    }
-
-    // Connect & Polling Loop
-    LaunchedEffect(espIp) {
-        apiClient.updateBaseUrl(espIp)
-        var lastState = 0
-        
-        while (true) {
-            apiClient.fetchStatus(
-                onSuccess = { newStatus ->
-                    isConnected = true
-                    
-                    // Shot detection logic: Transition from 1 (Aiming) or 0 (Standby if missed) to 2 (Post-Shot)
-                    if (newStatus.state == 2 && lastState != 2) {
-                        // Calculate score locally
-                        val cx = newStatus.shotX - 160.0f - calibX
-                        val cy = newStatus.shotY - 120.0f - calibY
-                        val distPixels = kotlin.math.sqrt((cx * cx) + (cy * cy))
-                        
-                        val pEff = 0.00896f
-                        val focalLengthPx = lensMm / pEff
-                        val scaleFactor = (distM * 1000.0f) / focalLengthPx
-                        
-                        val calculatedScore = 10.9f - ((distPixels * scaleFactor) / 8.0f)
-                        localScore = calculatedScore.coerceAtLeast(0.0f)
-                        
-                        // Add to shots list
-                        shots.add(ShotPoint(newStatus.shotX, newStatus.shotY, String.format(Locale.US, "%.1f", localScore)))
-                    }
-
-                    // Handle reset
-                    if (newStatus.state == 1 && lastState == 0 && shots.isNotEmpty()) {
-                        // Just a clean state transition to Aiming, we might want to clear shots manually later
-                    }
-
-                    // Update trace
-                    if (newStatus.state == 1) { // Apuntando
-                        if (newStatus.v > 0) {
-                            trace.add(Offset(newStatus.x, newStatus.y))
-                        }
-                    } else {
-                        // Clear trace outside aiming state
-                        if (trace.isNotEmpty() && newStatus.state == 0) {
-                            trace.clear()
-                        }
-                    }
-
-                    lastState = newStatus.state
-                    status = newStatus
-                },
-                onFailure = {
-                    isConnected = false
-                }
-            )
-            delay(150) // poll frequency
-        }
     }
 
     fun exportToCsv() {
@@ -169,7 +201,6 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
             Toast.makeText(context, "No hay disparos para exportar", Toast.LENGTH_SHORT).show()
             return
         }
-        
         try {
             val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
             val filename = "Splatt_Session_$timestamp.csv"
@@ -198,7 +229,7 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    Box(modifier = Modifier.fillMaxSize().systemBarsPadding()) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -212,24 +243,27 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Connection and IP indicator
+                // Connection indicator
                 Column(
                     modifier = Modifier.weight(1f)
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.clip(RoundedCornerShape(8.dp))
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { if (!isConnected && !isScanning) bleManager.startScan() }
+                            .padding(4.dp)
                     ) {
                         Box(
                             modifier = Modifier
                                 .size(10.dp)
                                 .clip(RoundedCornerShape(50))
-                                .background(if (isConnected) GreenActive else RedActive)
+                                .background(if (isConnected) GreenActive else if (isScanning) Color(0xFFF39C12) else RedActive)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = if (isConnected) "Conectado ($espIp)" else "Desconectado",
-                            color = if (isConnected) Color.White else RedActive,
+                            text = if (isConnected) "Conectado (BLE)" else if (isScanning) "Buscando dispositivo..." else "Desconectado (Tocar)",
+                            color = if (isConnected) Color.White else if (isScanning) Color(0xFFF39C12) else RedActive,
                             fontWeight = FontWeight.Bold,
                             fontSize = 14.sp
                         )
@@ -244,17 +278,6 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
 
                 // Header buttons
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    // IP Config Button
-                    IconButton(
-                        onClick = { showIpConfig = true },
-                        modifier = Modifier
-                            .size(36.dp)
-                            .background(GlassBg, RoundedCornerShape(8.dp))
-                    ) {
-                        Text("⚙", color = Color.White, fontSize = 16.sp)
-                    }
-
-                    // Theme Button
                     Button(
                         onClick = onToggleTheme,
                         colors = ButtonDefaults.buttonColors(containerColor = GlassBg, contentColor = Color.White),
@@ -264,24 +287,87 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                         Text(if (isLightMode) "Tema Oscuro" else "Tema Claro", fontSize = 12.sp)
                     }
 
-                    // Deep sleep button (Modo Carga)
                     Button(
                         onClick = {
-                            scope.launch {
-                                apiClient.executeGet("/sleep") { success ->
-                                    if (success) {
-                                        Toast.makeText(context, "ESP32 apagado (Modo Carga activo)", Toast.LENGTH_LONG).show()
-                                    } else {
-                                        Toast.makeText(context, "Error al mandar comando de apagado", Toast.LENGTH_SHORT).show()
-                                    }
-                                }
-                            }
+                            bleManager.sendCommand("sleep")
+                            Toast.makeText(context, "Modo Carga activado. Reinicia la placa para conectar.", Toast.LENGTH_LONG).show()
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = RedActive, contentColor = Color.White),
                         contentPadding = PaddingValues(horizontal = 8.dp),
                         modifier = Modifier.height(36.dp)
                     ) {
-                        Text("🔋 Apagar / Cargar", fontSize = 12.sp)
+                        Text("🔋 Apagar", fontSize = 12.sp)
+                    }
+                }
+            }
+
+            // --- INFO OVERLAYS (Timer, Score, Shots) ---
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Left: Timer
+                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.TopStart) {
+                    if (status.state == 1 || status.state == 2 || (status.state == 0 && status.time > 0)) {
+                        Box(
+                            modifier = Modifier
+                                .background(PanelBg.copy(alpha = 0.8f), RoundedCornerShape(8.dp))
+                                .padding(horizontal = 12.dp, vertical = 6.dp)
+                        ) {
+                            val seconds = status.time / 1000
+                            val deciseconds = (status.time % 1000) / 100
+                            Text(
+                                text = String.format(Locale.US, "⏱ %d.%d s", seconds, deciseconds),
+                                color = AccentColor,
+                                fontSize = 28.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+
+                // Center: Score
+                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.TopCenter) {
+                    Text(
+                        text = if (localScore > 0) String.format(Locale.US, "%.1f", localScore) else "0.0",
+                        fontSize = 64.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = GreenActive,
+                        modifier = Modifier.offset(y = (-8).dp) // Move it slightly up as requested
+                    )
+                }
+
+                // Right: Shots Count & Reset
+                Row(
+                    modifier = Modifier.weight(1f),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (shots.isNotEmpty()) {
+                        Button(
+                            onClick = { shots.clear(); trace.clear(); localScore = 0.0f },
+                            colors = ButtonDefaults.buttonColors(containerColor = RedActive),
+                            contentPadding = PaddingValues(horizontal = 8.dp),
+                            modifier = Modifier.height(36.dp).padding(end = 8.dp)
+                        ) {
+                            Text("Borrar", fontSize = 14.sp)
+                        }
+                    }
+                    
+                    Box(
+                        modifier = Modifier
+                            .background(PanelBg.copy(alpha = 0.8f), RoundedCornerShape(8.dp))
+                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            text = "Disparos: ${shots.size}",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 18.sp
+                        )
                     }
                 }
             }
@@ -309,53 +395,6 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                     shots = shots,
                     trace = trace
                 )
-
-                // Score Overlay
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .padding(12.dp)
-                ) {
-                    Text(
-                        text = if (localScore > 0) String.format(Locale.US, "%.1f", localScore) else "0.0",
-                        fontSize = 48.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = GreenActive
-                    )
-                }
-
-                // Shots Count badge & Reset Button
-                Row(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    if (shots.isNotEmpty()) {
-                        Button(
-                            onClick = { shots.clear(); localScore = 0.0f },
-                            colors = ButtonDefaults.buttonColors(containerColor = RedActive),
-                            contentPadding = PaddingValues(horizontal = 8.dp),
-                            modifier = Modifier.height(32.dp)
-                        ) {
-                            Text("Borrar", fontSize = 12.sp)
-                        }
-                    }
-                    
-                    Box(
-                        modifier = Modifier
-                            .background(PanelBg.copy(alpha = 0.8f), RoundedCornerShape(8.dp))
-                            .padding(horizontal = 8.dp, vertical = 4.dp)
-                    ) {
-                        Text(
-                            text = "Disparos: ${shots.size}",
-                            color = Color.White,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 14.sp
-                        )
-                    }
-                }
             }
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -369,7 +408,6 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Manual Calibration D-Pad (local app state update)
                 CalibrationDPad(
                     onMoveUp = { calibY -= 0.5f; prefs.edit().putFloat("calib_y", calibY).apply() },
                     onMoveDown = { calibY += 0.5f; prefs.edit().putFloat("calib_y", calibY).apply() },
@@ -377,48 +415,59 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                     onMoveRight = { calibX += 0.5f; prefs.edit().putFloat("calib_x", calibX).apply() }
                 )
 
-                // Action Buttons
                 Column(
                     modifier = Modifier
                         .weight(1f)
                         .padding(start = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    // Start / Cancel Shot Button
-                    if (status.state == 0) { // Standby
-                        Button(
-                            onClick = { apiClient.executeGet("/start_shot") {} },
-                            colors = ButtonDefaults.buttonColors(containerColor = AccentColor),
-                            modifier = Modifier.fillMaxWidth().height(48.dp)
-                        ) {
-                            Text("🎯 INICIAR TIRO", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                        }
-                    } else { // Aiming or Post-Shot
-                        Button(
-                            onClick = { apiClient.executeGet("/cancel_shot") {} },
-                            colors = ButtonDefaults.buttonColors(containerColor = RedActive),
-                            modifier = Modifier.fillMaxWidth().height(48.dp)
-                        ) {
-                            Text("❌ Cancelar", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                        }
-                    }
-
-                    // Calibration Mode Trigger
-                    Button(
-                        onClick = {
-                            if (status.state == 0) {
-                                apiClient.executeGet("/start_calib") {}
-                            } else {
-                                apiClient.executeGet("/stop_calib") {}
-                            }
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = GlassBg, contentColor = Color.White),
-                        modifier = Modifier.fillMaxWidth()
+                    // Main Action Buttons Row
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text(if (status.state == 0) "CALIBRAR" else "DETENER CALIB.")
+                        if (status.state == 0) {
+                            Button(
+                                onClick = { bleManager.sendCommand("start_shot") },
+                                colors = ButtonDefaults.buttonColors(containerColor = AccentColor),
+                                modifier = Modifier.weight(1f).height(48.dp),
+                                enabled = isConnected,
+                                contentPadding = PaddingValues(0.dp)
+                            ) {
+                                Text("🎯 TIRO", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            }
+                        } else if (!isCalibrating) {
+                            Button(
+                                onClick = { bleManager.sendCommand("cancel_shot") },
+                                colors = ButtonDefaults.buttonColors(containerColor = RedActive),
+                                modifier = Modifier.weight(1f).height(48.dp),
+                                contentPadding = PaddingValues(0.dp)
+                            ) {
+                                Text("❌ Cancelar", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            }
+                        }
+
+                        if (status.state == 0 || isCalibrating) {
+                            Button(
+                                onClick = {
+                                    if (!isCalibrating) {
+                                        isCalibrating = true
+                                        bleManager.sendCommand("start_calib")
+                                    } else {
+                                        isCalibrating = false
+                                        bleManager.sendCommand("stop_calib")
+                                    }
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = GlassBg, contentColor = Color.White),
+                                modifier = Modifier.weight(1f).height(48.dp),
+                                enabled = isConnected,
+                                contentPadding = PaddingValues(0.dp)
+                            ) {
+                                Text(if (!isCalibrating) "CALIBRAR" else "DETENER", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
                     }
 
-                    // Zoom Buttons
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -439,7 +488,6 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                         }
                     }
 
-                    // Bottom settings & history triggers
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -447,7 +495,8 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                         Button(
                             onClick = { showSettings = true },
                             modifier = Modifier.weight(1f),
-                            colors = ButtonDefaults.buttonColors(containerColor = GlassBg, contentColor = Color.White)
+                            colors = ButtonDefaults.buttonColors(containerColor = GlassBg, contentColor = Color.White),
+                            enabled = isConnected
                         ) {
                             Text("Ajustes")
                         }
@@ -470,28 +519,38 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                 status = status,
                 currentDistance = distM,
                 currentLens = lensMm,
+                currentSensitivity = currentSensitivity,
+                currentSound = currentSound,
+                currentExposure = currentExposure,
+                currentGain = currentGain,
                 onDismiss = { showSettings = false },
                 onSaveSettings = { exposure, gain, distance, lens, sensitivity, sound ->
-                    // Save local variables
                     distM = distance
                     lensMm = lens
+                    currentSensitivity = sensitivity
+                    currentSound = sound
+                    currentExposure = exposure
+                    currentGain = gain
                     prefs.edit()
                         .putFloat("dist", distance)
                         .putFloat("lens", lens)
+                        .putInt("sensitivity", sensitivity)
+                        .putInt("sound", sound)
+                        .putInt("exposure", exposure)
+                        .putInt("gain", gain)
                         .apply()
                         
-                    // Send ESP32 variables
-                    apiClient.executeGet(
-                        "/set",
-                        mapOf(
-                            "exp" to exposure.toString(),
-                            "gain" to gain.toString(),
-                            "thr" to ((11 - sensitivity) * 5).toString(),
-                            "snd" to (sound * 250).toString()
-                        )
-                    ) {
-                        Toast.makeText(context, "Ajustes enviados", Toast.LENGTH_SHORT).show()
+                    scope.launch {
+                        bleManager.sendConfig("exp:$exposure")
+                        delay(150)
+                        bleManager.sendConfig("gain:$gain")
+                        delay(150)
+                        bleManager.sendConfig("thr:${(11 - sensitivity) * 5}")
+                        delay(150)
+                        bleManager.sendConfig("snd:${sound * 250}")
                     }
+
+                    Toast.makeText(context, "Ajustes enviados", Toast.LENGTH_SHORT).show()
                 },
                 onAdjustFocus = {
                     showSettings = false
@@ -502,44 +561,10 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
 
         if (showFocus) {
             FocusDialog(
-                baseUrl = apiClient.getBaseUrl(),
+                focusValue = status.f,
+                onStartFocus = { bleManager.sendCommand("start_focus") },
+                onStopFocus = { bleManager.sendCommand("stop_focus") },
                 onDismiss = { showFocus = false }
-            )
-        }
-
-        if (showIpConfig) {
-            var tempIp by remember { mutableStateOf(espIp) }
-            AlertDialog(
-                onDismissRequest = { showIpConfig = false },
-                title = { Text("Configurar IP de la Placa") },
-                text = {
-                    Column {
-                        Text("Introduce la dirección IP de tu ESP32 (Punto de acceso por defecto: 192.168.4.1):", fontSize = 14.sp)
-                        Spacer(modifier = Modifier.height(8.dp))
-                        TextField(
-                            value = tempIp,
-                            onValueChange = { tempIp = it },
-                            placeholder = { Text("192.168.4.1") },
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
-                },
-                confirmButton = {
-                    TextButton(
-                        onClick = {
-                            espIp = tempIp
-                            prefs.edit().putString("esp_ip", tempIp).apply()
-                            showIpConfig = false
-                        }
-                    ) {
-                        Text("Aceptar", color = AccentColor)
-                    }
-                },
-                dismissButton = {
-                    TextButton(onClick = { showIpConfig = false }) {
-                        Text("Cancelar")
-                    }
-                }
             )
         }
     }

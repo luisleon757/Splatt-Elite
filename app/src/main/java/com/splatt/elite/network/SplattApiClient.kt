@@ -18,7 +18,8 @@ data class SplattStatus(
     val y: Float = 0.0f,
     val v: Int = 0,
     val s: Int = 0,
-    val c: Int = 0
+    val c: Int = 0,
+    val f: Int = 0
 )
 
 class SplattApiClient(private var baseUrl: String = "http://192.168.4.1") {

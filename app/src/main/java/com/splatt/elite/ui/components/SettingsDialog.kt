@@ -20,16 +20,20 @@ fun SettingsDialog(
     status: SplattStatus,
     currentDistance: Float,
     currentLens: Float,
+    currentSensitivity: Int,
+    currentSound: Int,
+    currentExposure: Int,
+    currentGain: Int,
     onDismiss: () -> Unit,
     onSaveSettings: (exposure: Int, gain: Int, distance: Float, lens: Float, sensitivity: Int, sound: Int) -> Unit,
     onAdjustFocus: () -> Unit
 ) {
-    var exposure by remember { mutableStateOf(status.v.coerceIn(10, 1200)) }
-    var gain by remember { mutableStateOf(status.s.coerceIn(0, 30)) } // v and s used as placeholders
+    var exposure by remember { mutableStateOf(currentExposure.coerceIn(10, 1200)) }
+    var gain by remember { mutableStateOf(currentGain.coerceIn(0, 30)) }
     var distance by remember { mutableFloatStateOf(currentDistance) }
     var lens by remember { mutableFloatStateOf(currentLens) }
-    var sensitivity by remember { mutableIntStateOf(9) }
-    var soundSensitivity by remember { mutableIntStateOf(8) }
+    var sensitivity by remember { mutableIntStateOf(currentSensitivity) }
+    var soundSensitivity by remember { mutableIntStateOf(currentSound) }
 
     AlertDialog(
         onDismissRequest = onDismiss,

@@ -21,6 +21,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import com.splatt.elite.ui.theme.AccentColor
 
 data class ShotPoint(val x: Float, val y: Float, val label: String)
+data class TracePoint(val x: Float, val y: Float, val color: Color)
 
 @Composable
 fun TargetView(
@@ -35,7 +36,7 @@ fun TargetView(
     distanceM: Float = 10.0f,
     lensMm: Float = 25.0f,
     shots: List<ShotPoint> = emptyList(),
-    trace: List<Offset> = emptyList()
+    trace: List<TracePoint> = emptyList()
 ) {
     val bgColor = if (isLightMode) Color(0xFFFDF5E6) else Color(0xFF1E1E1E)
     val paperColor = Color(0xFFF0E5D8)
@@ -67,8 +68,8 @@ fun TargetView(
                 val scaleFactor = (distanceM * 1000.0f) / focalLengthPx
                 
                 // Flip mode (standard is flipped/unflipped, we apply standard conversion)
-                val cx = (rx - 160.0f - calibX) * scaleFactor
-                val cy = (ry - 120.0f - calibY) * scaleFactor
+                val cx = -(rx - 160.0f - calibX) * scaleFactor
+                val cy = -(ry - 120.0f - calibY) * scaleFactor
                 return Offset(cx, cy)
             }
 
@@ -79,12 +80,12 @@ fun TargetView(
                 return Offset(pxX, pxY)
             }
 
-            // --- DRAW TARGET PAPER ---
+            // --- DRAW TARGET PAPER (SQUARE) ---
             val paperRadius = targetRadiusPx * zoomFactor
-            drawCircle(
+            drawRect(
                 color = paperColor,
-                radius = paperRadius,
-                center = Offset(centerX, centerY)
+                topLeft = Offset(centerX - paperRadius, centerY - paperRadius),
+                size = androidx.compose.ui.geometry.Size(paperRadius * 2, paperRadius * 2)
             )
 
             // --- DRAW BLACK CENTER ---
@@ -110,9 +111,10 @@ fun TargetView(
                     style = Stroke(width = 1.0f)
                 )
 
-                // Draw numbers for rings (1 to 9)
+                // Draw numbers for rings (1 to 8)
+                // ISSF 10m Pistol targets usually don't print the 9, but we print up to 9
                 val numberLabel = (i + 1).toString()
-                if (d > 11.5f && d < 155.5f) {
+                if (d > 11.5f) { // d > 11.5f excludes the 10 ring. Includes 155.5f (ring 1)
                     val labelOffsetMm = (d / 2.0f) - 4.0f
                     val paint = Paint().asFrameworkPaint().apply {
                         color = (if (d <= 59.5f) Color.White else Color.DarkGray).toArgb()
@@ -156,13 +158,12 @@ fun TargetView(
                 for (i in 0 until trace.size - 1) {
                     val p1 = toCanvasCoordinates(toMm(trace[i].x, trace[i].y))
                     val p2 = toCanvasCoordinates(toMm(trace[i + 1].x, trace[i + 1].y))
-                    val alpha = (i.toFloat() / trace.size.toFloat()).coerceIn(0.1f, 0.9f)
                     
                     drawLine(
-                        color = Color(0xFF3498DB).copy(alpha = alpha),
+                        color = trace[i].color,
                         start = p1,
                         end = p2,
-                        strokeWidth = 3.0f
+                        strokeWidth = 4.5f
                     )
                 }
             }
