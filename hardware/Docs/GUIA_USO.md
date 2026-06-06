@@ -25,18 +25,18 @@ El sistema se compone de dos componentes principales: el **Hardware Emisor/Senso
 
 ```mermaid
 graph TD
-    A[Pistola/Carabina con Láser IR o Rojo] -->|Haz de luz al disparar| B(XIAO ESP32S3 Sense)
+    A[Pistola/Carabina con Láser IR o Rojo] -->|Láser continuo apuntando| B(XIAO ESP32S3 Sense)
     C[Sonido del disparador/martillo] -->|Micrófono PDM incorporado| B
     B -->|Procesa imagen y audio localmente| D{¿Disparo detectado?}
-    D -->|Sí| E[Envía datos del disparo por BLE]
+    D -->|Sí| E[Envía posición por BLE]
     E --> F[App Móvil Android]
-    F -->|Dibuja traza, puntuación y guarda datos| G[Pantalla del Smartphone / Historial]
+    F -->|Dibuja traza continua y calcula puntuación al disparar| G[Pantalla del Smartphone]
 ```
 
 ### Componentes de Hardware Clave:
 1. **Seeed Studio XIAO ESP32S3 Sense**: El microcontrolador principal que procesa la imagen de la cámara y el audio del micrófono a alta velocidad.
 2. **Lente de Montura M12 (25mm)**: Permite ajustar el enfoque y conseguir el zoom necesario para capturar la diana a la distancia estándar de tiro (generalmente 10 metros).
-3. **Módulo Láser**: Montado en el arma, emite un pulso muy corto de luz (visible o infrarroja) al presionar el disparador.
+3. **Módulo Láser**: Montado en el arma, debe estar encendido de forma continua mientras se apunta. La cámara sigue este punto constantemente para dibujar la traza, y registrará el impacto en el momento exacto en que el micrófono detecte el sonido del disparo.
 4. **Batería LiPo (400mAh - 500mAh)**: Alimenta el hardware de forma portátil e inalámbrica.
 
 ---
@@ -45,7 +45,7 @@ graph TD
 
 1. **Encendido**: Enciende el dispositivo Splatt Elite mediante su interruptor físico. El LED comenzará a indicar que está listo para emparejarse.
 2. **Abrir la Aplicación**: Inicia la aplicación **Splatt Elite** en tu dispositivo Android. Asegúrate de tener el Bluetooth y la ubicación activados.
-3. **Conexión**: En la pantalla de conexión de la app, selecciona **Splatt_Elite** de la lista de dispositivos BLE para conectarte.
+3. **Conexión Automática**: ¡No tienes que emparejar ni seleccionar nada manualmente! La aplicación escaneará y se conectará de forma totalmente automática al dispositivo **Splatt_Elite** en cuanto lo detecte en tu entorno.
 4. **Enfoque de la Cámara**:
    - En la aplicación, activa el **Asistente de Enfoque**.
    - Gira suavemente la lente M12 del dispositivo de forma física mientras observas el medidor de nitidez en la app.
@@ -59,7 +59,8 @@ graph TD
 ### 1. Conexión y Vinculación BLE
 La comunicación utiliza Bluetooth Low Energy para ahorrar batería.
 - La placa se anuncia bajo el nombre `Splatt_Elite`.
-- Una vez conectado, la aplicación recibirá notificaciones en formato JSON con la telemetría del sensor (estado, coordenadas `x`, `y`, intensidad del láser, duración del apuntado en milisegundos).
+- La aplicación se encarga de escanear y conectarse automáticamente en segundo plano (siempre que el Bluetooth esté encendido y con permisos de Dispositivos Cercanos).
+- Una vez conectado, la aplicación recibirá notificaciones continuas en formato JSON con la telemetría del sensor (coordenadas `x`, `y` en tiempo real de la traza del láser continuo, duración del apuntado y la confirmación cuando haya detonación sonora).
 
 ### 2. Asistente de Enfoque Óptico
 Dado que el dispositivo no transmite un flujo de video continuo para ahorrar batería y ancho de banda, cuenta con un algoritmo de enfoque óptico autónomo:
