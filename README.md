@@ -28,15 +28,21 @@ Para abrir, modificar o compilar este proyecto, necesitas:
 
 ---
 
-## 📂 Estructura del Proyecto
+## 📂 Estructura del Proyecto (Monorepo)
 
-El código está estructurado de la siguiente forma:
+Este repositorio es un **Monorepo** que contiene tanto el código de la aplicación móvil como el software de la placa (ESP32) y los diseños 3D. Se divide principalmente en dos grandes bloques:
 
-- **[`MainActivity.kt`](file:///c:/Users/luis/.gemini/antigravity/playground/scatt_android/app/src/main/java/com/splatt/elite/MainActivity.kt):** Actividad principal que maneja los flujos de estado, los bucles de actualización periódicos (`LaunchedEffect` de polling) y la estructura de vistas Compose.
-- **[`network/BleManager.kt`](file:///c:/Users/luis/.gemini/antigravity/playground/scatt_android/app/src/main/java/com/splatt/elite/network/BleManager.kt):** Gestor de conectividad **Bluetooth Low Energy (BLE)** encargado de descubrir, conectar y gestionar la comunicación bidireccional (comandos y notificaciones) con el firmware.
-- **[`ui/components/TargetView.kt`](file:///c:/Users/luis/.gemini/antigravity/playground/scatt_android/app/src/main/java/com/splatt/elite/ui/components/TargetView.kt):** Lienzo dinámico (`Canvas`) que escala los milímetros físicos procedentes de la cámara al espacio de píxeles en pantalla usando el factor de aumento seleccionado y dibuja tanto la trayectoria del láser como los disparos.
-- **[`ui/components/SettingsDialog.kt`](file:///c:/Users/luis/.gemini/antigravity/playground/scatt_android/app/src/main/java/com/splatt/elite/ui/components/SettingsDialog.kt):** Cuadro de configuración para modificar exposición, ganancia, filtros de sensibilidad al láser e intensidad acústica para el micrófono PDM.
-- **[`ui/components/FocusDialog.kt`](file:///c:/Users/luis/.gemini/antigravity/playground/scatt_android/app/src/main/java/com/splatt/elite/ui/components/FocusDialog.kt):** Reproductor a tiempo real de la señal del visor para calibrar el enfoque de lente.
+### 📱 1. Aplicación Android (`/app`)
+La raíz del proyecto funciona como un proyecto estándar de Android Studio. El código fuente de la app se encuentra en la carpeta `app/src/main/java/com/splatt/elite/`:
+- **`MainActivity.kt`:** Interfaz principal en Jetpack Compose.
+- **`network/BleManager.kt`:** Gestor de conectividad **BLE** para hablar con el firmware.
+- **`ui/components/TargetView.kt`:** Lienzo dinámico (`Canvas`) que dibuja la diana a escala milimétrica y la trayectoria del láser.
+
+### 🔌 2. Hardware y Arduino (`/hardware`)
+Todo lo relacionado con la construcción física del dispositivo y el código del microcontrolador se encuentra aislado en la carpeta `hardware/`:
+- **`hardware/firmware/`**: Aquí está el código de **Arduino** (`esp32_splatt.ino`, `camera_pins.h`) que debes subir a la placa Seeed Studio XIAO ESP32S3 Sense.
+- **`hardware/3D_Models/`**: Archivos `.stl` listos para imprimir la carcasa protectora en 3D.
+- **`hardware/Docs/`**: Guía de uso, lista de materiales para construirlo (`BOM.md`) y todas las **Dianas oficiales para imprimir** (`Targets/`).
 
 ---
 
