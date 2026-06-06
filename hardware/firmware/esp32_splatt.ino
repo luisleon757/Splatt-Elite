@@ -85,6 +85,7 @@ int detect_threshold = 40;
 int cam_exposure = 300;     
 int cam_gain = 0;           
 int audio_threshold = 2000; 
+int max_audio_threshold = 60000; 
 
 // ==========================================
 // TAREA FREERTOS: LECTURA DE AUDIO I2S
@@ -114,7 +115,7 @@ void i2sAudioTask(void *pvParameters) {
       audio_energy = max_sample - min_sample;
     }
     
-    if (audio_energy > audio_threshold) {
+    if (audio_energy > audio_threshold && audio_energy < max_audio_threshold) {
       unsigned long currentTime = millis();
       if (currentTime - lastShotTime > 5000) {
         if (lastShotTime == 0 && currentTime < 5000) {
@@ -199,6 +200,9 @@ class MyConfigCallbacks: public BLECharacteristicCallbacks {
       }
       else if (config.startsWith("snd:")) {
         audio_threshold = config.substring(4).toInt();
+      }
+      else if (config.startsWith("max_snd:")) {
+        max_audio_threshold = config.substring(8).toInt();
       }
     }
 };

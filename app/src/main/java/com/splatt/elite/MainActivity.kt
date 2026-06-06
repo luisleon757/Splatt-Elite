@@ -94,6 +94,7 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
     var currentSound by remember { mutableIntStateOf(prefs.getInt("sound", 8)) }
     var currentExposure by remember { mutableIntStateOf(prefs.getInt("exposure", 300)) }
     var currentGain by remember { mutableIntStateOf(prefs.getInt("gain", 0)) }
+    var maxSound by remember { mutableIntStateOf(prefs.getInt("max_sound", 10)) }
     
     var localScore by remember { mutableFloatStateOf(0.0f) }
     var isCalibrating by remember { mutableStateOf(false) }
@@ -102,6 +103,7 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
     var uiZoom by remember { mutableStateOf(1.0f) }
     val shots = remember { mutableStateListOf<ShotPoint>() }
     val trace = remember { mutableStateListOf<TracePoint>() }
+    val calibShots = remember { mutableStateListOf<Offset>() }
     
     // Dialog control
     var showSettings by remember { mutableStateOf(false) }
@@ -135,7 +137,14 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
 
     // Shot logic (when status changes)
     var lastState by remember { mutableIntStateOf(0) }
+    var lastS by remember { mutableIntStateOf(0) }
+    
     LaunchedEffect(status) {
+        if (isCalibrating && status.s == 1 && lastS == 0) {
+            calibShots.add(Offset(status.shotX, status.shotY))
+            Toast.makeText(context, "Disparo de calibración registrado (${calibShots.size})", Toast.LENGTH_SHORT).show()
+        }
+        
         if (status.state == 2 && lastState != 2) {
             // Calculate score locally
             val cx = status.shotX - 160.0f - calibX
@@ -186,6 +195,7 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
         }
         
         lastState = status.state
+        lastS = status.s
     }
 
     val stateText = when (status.state) {
@@ -393,7 +403,8 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                     distanceM = distM,
                     lensMm = lensMm,
                     shots = shots,
-                    trace = trace
+                    trace = trace,
+                    calibShots = calibShots
                 )
             }
 
@@ -452,9 +463,19 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                                 onClick = {
                                     if (!isCalibrating) {
                                         isCalibrating = true
+                                        calibShots.clear()
                                         bleManager.sendCommand("start_calib")
                                     } else {
                                         isCalibrating = false
+                                        if (calibShots.isNotEmpty()) {
+                                            val avgX = calibShots.map { it.x }.average().toFloat()
+                                            val avgY = calibShots.map { it.y }.average().toFloat()
+                                            calibX = avgX - 160.0f
+                                            calibY = avgY - 120.0f
+                                            prefs.edit().putFloat("calib_x", calibX).putFloat("calib_y", calibY).apply()
+                                            Toast.makeText(context, "Calibración aplicada (Promedio de ${calibShots.size} disparos)", Toast.LENGTH_LONG).show()
+                                            calibShots.clear()
+                                        }
                                         bleManager.sendCommand("stop_calib")
                                     }
                                 },
@@ -521,14 +542,16 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                 currentLens = lensMm,
                 currentSensitivity = currentSensitivity,
                 currentSound = currentSound,
+                currentMaxSound = maxSound,
                 currentExposure = currentExposure,
                 currentGain = currentGain,
                 onDismiss = { showSettings = false },
-                onSaveSettings = { exposure, gain, distance, lens, sensitivity, sound ->
+                onSaveSettings = { exposure, gain, distance, lens, sensitivity, sound, maxSnd ->
                     distM = distance
                     lensMm = lens
                     currentSensitivity = sensitivity
                     currentSound = sound
+                    maxSound = maxSnd
                     currentExposure = exposure
                     currentGain = gain
                     prefs.edit()
@@ -536,6 +559,7 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                         .putFloat("lens", lens)
                         .putInt("sensitivity", sensitivity)
                         .putInt("sound", sound)
+                        .putInt("max_sound", maxSnd)
                         .putInt("exposure", exposure)
                         .putInt("gain", gain)
                         .apply()
@@ -548,6 +572,8 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                         bleManager.sendConfig("thr:${(11 - sensitivity) * 5}")
                         delay(150)
                         bleManager.sendConfig("snd:${sound * 250}")
+                        delay(150)
+                        bleManager.sendConfig("max_snd:${maxSnd * 250}")
                     }
 
                     Toast.makeText(context, "Ajustes enviados", Toast.LENGTH_SHORT).show()

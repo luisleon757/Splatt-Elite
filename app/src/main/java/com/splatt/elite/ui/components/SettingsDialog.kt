@@ -22,10 +22,11 @@ fun SettingsDialog(
     currentLens: Float,
     currentSensitivity: Int,
     currentSound: Int,
+    currentMaxSound: Int,
     currentExposure: Int,
     currentGain: Int,
     onDismiss: () -> Unit,
-    onSaveSettings: (exposure: Int, gain: Int, distance: Float, lens: Float, sensitivity: Int, sound: Int) -> Unit,
+    onSaveSettings: (exposure: Int, gain: Int, distance: Float, lens: Float, sensitivity: Int, sound: Int, maxSound: Int) -> Unit,
     onAdjustFocus: () -> Unit
 ) {
     var exposure by remember { mutableStateOf(currentExposure.coerceIn(10, 1200)) }
@@ -34,6 +35,7 @@ fun SettingsDialog(
     var lens by remember { mutableFloatStateOf(currentLens) }
     var sensitivity by remember { mutableIntStateOf(currentSensitivity) }
     var soundSensitivity by remember { mutableIntStateOf(currentSound) }
+    var maxSoundSensitivity by remember { mutableIntStateOf(currentMaxSound) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -234,6 +236,57 @@ fun SettingsDialog(
                     }
                 }
 
+                // Max Sound Sensitivity
+                Column {
+                    Text("Rechazo de Ruido Fuerte (Nivel: $maxSoundSensitivity)", style = MaterialTheme.typography.bodyMedium)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        (1..5).forEach { num ->
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .background(
+                                        if (maxSoundSensitivity == num) AccentColor else Color.DarkGray,
+                                        shape = RoundedCornerShape(4.dp)
+                                    )
+                                    .clickable { maxSoundSensitivity = num },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    num.toString(),
+                                    color = if (maxSoundSensitivity == num) Color.Black else Color.White
+                                )
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        (6..10).forEach { num ->
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .background(
+                                        if (maxSoundSensitivity == num) AccentColor else Color.DarkGray,
+                                        shape = RoundedCornerShape(4.dp)
+                                    )
+                                    .clickable { maxSoundSensitivity = num },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    num.toString(),
+                                    color = if (maxSoundSensitivity == num) Color.Black else Color.White
+                                )
+                            }
+                        }
+                    }
+                    Text("10 = Sin límite de ruido. Valores menores ignoran golpes fuertes.", color = Color.Gray, fontSize = 10.sp)
+                }
+
                 Button(
                     onClick = onAdjustFocus,
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2ECC71)),
@@ -246,7 +299,7 @@ fun SettingsDialog(
         confirmButton = {
             TextButton(
                 onClick = {
-                    onSaveSettings(exposure, gain, distance, lens, sensitivity, soundSensitivity)
+                    onSaveSettings(exposure, gain, distance, lens, sensitivity, soundSensitivity, maxSoundSensitivity)
                     onDismiss()
                 }
             ) {

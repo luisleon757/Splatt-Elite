@@ -71,7 +71,7 @@ Dado que el dispositivo no transmite un flujo de video continuo para ahorrar bat
 ### 3. Calibración del Punto de Impacto
 Para asegurar que tus disparos virtuales se correspondan exactamente con tus miras físicas:
 - **Calibración Manual**: Utiliza el D-Pad de la aplicación para mover las coordenadas del centro de la diana digital hacia arriba, abajo, izquierda o derecha de forma visual basándote en dónde caen los impactos.
-- *Nota:* La calibración fina se realiza exclusivamente de forma manual desde el D-Pad observando la agrupación (la función de calibración con un solo disparo no está activa en la app Android para evitar errores por gatillazos).
+- **Calibración por Disparos Múltiples**: Presiona el botón "CALIBRAR". Realiza tantos disparos como necesites apuntando rigurosamente al centro de la diana física. Verás aparecer impactos de color verde indicando dónde se registraron. Cuando termines, presiona "DETENER". La app calculará matemáticamente el **promedio de tus disparos** y ajustará el láser al centro automáticamente.
 
 ### 4. Sesión de Entrenamiento y HUD
 - **Traza de Apuntado (Colores)**: La aplicación dibuja una traza que muestra el movimiento del arma. El color de la línea cambia según el tiempo que lleves apuntando: Verde (hasta 4s), Naranja (hasta 8s), Azul Oscuro (hasta 12s) y Rojo (más de 12s), ayudando a visualizar la fatiga o exceso de tiempo.
@@ -83,7 +83,8 @@ A través del menú de configuración en la app, puedes ajustar los parámetros 
 - **Distancia a la diana y Lente**: Puedes ajustar de forma variable (mediante deslizadores) la distancia física a la diana (1 a 25 metros) y la distancia focal de tu lente (ej. 25mm). La aplicación escalará matemáticamente el tamaño de la diana para mantener una medición ISSF perfecta sin importar dónde te coloques.
 - **Sensibilidad del Láser (detect_threshold)**: Umbral mínimo de brillo para que un punto sea considerado láser. Auméntalo si hay reflejos del sol o luces de la habitación que causen falsas detecciones.
 - **Exposición de la Cámara (cam_exposure)**: Tiempo de exposición del sensor (en ms). Un valor bajo oscurece la imagen de fondo de modo que solo el punto brillante del láser sea visible.
-- **Sensibilidad de Sonido (audio_threshold)**: Nivel *mínimo* de volumen del micrófono para activar el disparo. *Nota: No existe un umbral máximo, por lo que cualquier ruido que supere este umbral activará el disparo.* Debe ajustarse lo suficientemente alto para evitar ruidos ambientales, pero lo suficientemente bajo para captar el clic mecánico del arma.
+- **Sensibilidad de Sonido (audio_threshold)**: Nivel *mínimo* de volumen para activar el disparo.
+- **Rechazo de Ruido Fuerte (max_snd)**: Nivel *máximo* de ruido permitido. Cualquier ruido que supere este nivel será ignorado. Esto sirve para que la aplicación no se dispare al cerrar una puerta, dar una palmada o hablar fuerte, garantizando que solo captura el clic mecánico de tu arma. Ponlo al "10" si quieres desactivarlo.
 
 ---
 

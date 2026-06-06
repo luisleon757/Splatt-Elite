@@ -36,7 +36,8 @@ fun TargetView(
     distanceM: Float = 10.0f,
     lensMm: Float = 25.0f,
     shots: List<ShotPoint> = emptyList(),
-    trace: List<TracePoint> = emptyList()
+    trace: List<TracePoint> = emptyList(),
+    calibShots: List<Offset> = emptyList()
 ) {
     val bgColor = if (isLightMode) Color(0xFFFDF5E6) else Color(0xFF1E1E1E)
     val paperColor = Color(0xFFF0E5D8)
@@ -198,6 +199,23 @@ fun TargetView(
                     canvasPos.x,
                     canvasPos.y + (paint.textSize / 3.0f),
                     paint
+                )
+            }
+
+            // --- DRAW CALIBRATION SHOTS ---
+            calibShots.forEach { shot ->
+                val shotPosMm = toMm(shot.x, shot.y)
+                val canvasPos = toCanvasCoordinates(shotPosMm)
+                drawCircle(
+                    color = Color(0xFF2ECC71), // Green
+                    radius = (4.5f / 2.0f) * mmToPx * zoomFactor,
+                    center = canvasPos
+                )
+                drawCircle(
+                    color = Color.White,
+                    radius = (4.5f / 2.0f) * mmToPx * zoomFactor,
+                    center = canvasPos,
+                    style = Stroke(width = 1.0f)
                 )
             }
 
