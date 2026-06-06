@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Splatt Elite S3</title>
+  <style>
+    :root { --accent: #f39c12; --bg: #0f0f0f; --panel: rgba(25, 25, 25, 0.9); --glass: rgba(255, 255, 255, 0.05); }
+    body { background: var(--bg); color: #fff; margin:0; padding:0; display:flex; flex-direction:column; height: 100vh; overflow:hidden; font-family: 'Segoe UI', system-ui, sans-serif;}
+    
+    .viewport { flex: 1; position: relative; background: radial-gradient(circle, #222 0%, #000 100%); display:flex; justify-content:center; align-items:center; overflow:hidden; padding-top: 40px; }
+    canvas { display: block; border-radius: 50%; box-shadow: 0 0 50px rgba(0,0,0,0.8); background: #fafafa; max-height: 85%; max-width: 95%; cursor: crosshair;}
+    
+    .status-overlay { position: absolute; top:0; left:0; right:0; padding: 15px; display:flex; justify-content:space-between; align-items: flex-start; z-index: 10; pointer-events:none; }
+    .status-badge { background: var(--panel); padding: 10px 20px; border-radius: 12px; border: 1px solid var(--glass); backdrop-filter: blur(10px); font-weight: bold; font-size: 18px; text-transform: uppercase; color: var(--accent); }
+    
+    .score-container { position: absolute; left: 50%; transform: translateX(-50%); text-align: center; display: flex; flex-direction: column; align-items: center; z-index: 100; pointer-events: none; }
+    #txt-score { color: #2ecc71; font-size: 42px; font-weight: 800; text-shadow: 0 0 20px rgba(46, 204, 113, 0.8), 0 2px 10px rgba(0,0,0,0.5); line-height: 1; }
+
+    .controls { background: var(--panel); backdrop-filter: blur(20px); border-top: 1px solid var(--glass); display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; padding: 20px; min-height: 280px; box-sizing: border-box; position: relative; }
+    
+    .square-block { width: 100%; height: 140px; box-sizing: border-box; display: flex; align-items: center; justify-content: center; text-align: center; margin: 0; flex-direction: column; }
+    .d-pad { position: relative; background: var(--glass); border-radius: 4px; flex-direction: row; }
+    
+    button { background: linear-gradient(145deg, #3a3a3a, #2a2a2a); color: #fff; border: 1px solid #4a4a4a; border-radius: 2px; padding: 10px; font-weight: 700; cursor: pointer; transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1); font-size: 18px; line-height: 1.2; box-shadow: 0 4px 6px rgba(0,0,0,0.3); text-shadow: 0 1px 2px rgba(0,0,0,0.5); }
+    button:hover { background: linear-gradient(145deg, #444, #333); transform: translateY(-2px); box-shadow: 0 6px 12px rgba(0,0,0,0.4); border-color: #666; }
+    button:active { background: var(--accent); color: #000; transform: translateY(1px); box-shadow: 0 2px 4px rgba(0,0,0,0.3); text-shadow: none; border-color: var(--accent); }
+    
+    .btn-main { background: var(--glass); color: #fff; border: 1px solid var(--accent); text-transform: uppercase; letter-spacing: 1px; text-shadow: none; }
+    .btn-main:hover { background: rgba(243, 156, 18, 0.2); color: #fff; }
+    .btn-action { background: var(--glass); color: #fff; border: 1px solid #4a4a4a; }
+    .btn-danger { background: var(--glass); color: #fff; border: 1px solid #e74c3c; }
+    .btn-danger:hover { background: rgba(231, 76, 60, 0.2); color: #fff; }
+    .btn-success { background: var(--glass); color: #fff; border: 1px solid #2ecc71; }
+    
+    .d-pad button { position: absolute; width: 40px; height: 40px; background: #222; border: 1px solid #555; padding: 0; }
+    #btn-up { top: 5px; } #btn-down { bottom: 5px; } #btn-left { left: 5px; } #btn-right { right: 5px; }
+    .d-center { width: 35px; height: 35px; background: var(--accent); border-radius: 50%; opacity: 0.2;}
+
+    #btn-fullscreen { position: absolute; bottom: 20px; right: 20px; width: 50px; height: 50px; border-radius: 50%; background: var(--glass); border: 1px solid #555; z-index: 20;}
+
+    /* Modo Claro */
+    body.light-theme { --bg: #e0e5ec; --panel: rgba(255, 255, 255, 0.9); --glass: rgba(0, 0, 0, 0.05); color: #333; }
+    body.light-theme .viewport { background: radial-gradient(circle, #fff 0%, #d0d0d0 100%); }
+    body.light-theme .status-badge { color: #333; }
+    body.light-theme button { background: linear-gradient(145deg, #f0f0f0, #e6e6e6); color: #333; border-color: #ccc; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-shadow: none; }
+    body.light-theme button:hover { background: linear-gradient(145deg, #fff, #eee); border-color: #999; }
+    body.light-theme .d-pad button { background: #f9f9f9; border-color: #ccc; }
+    body.light-theme .d-center { background: #333; }
+
+    /* Modal de Ajustes IR */
+    .settings-modal { position: absolute; top:0; left:0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 100; display: none; justify-content: center; align-items: center; }
+    .settings-content { background: #1a1a1a; padding: 25px; border-radius: 20px; border: 1px solid #333; width: 80%; max-width: 400px; }
+    .settings-content h3 { margin-top: 0; color: var(--accent); text-align: center; }
+    .slider-group { margin-bottom: 20px; }
+    .slider-group label { display: flex; justify-content: space-between; font-size: 14px; color: #bbb; margin-bottom: 8px;}
+    .slider-group input { width: 100%; }
+
+    @media (orientation: landscape) {
+      .controls { height: 100%; width: 280px; grid-template-columns: 1fr; border-top:none; border-left: 1px solid var(--glass); overflow-y: auto; }
+      body { flex-direction: row; }
+      .d-pad { width: 100%; height: 140px; }
+    }
+
+    /* Grupos de botones digitales */
+    .btn-group-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 4px;
+      margin-top: 8px;
+      width: 100%;
+    }
+    .btn-level {
+      flex: 1;
+      height: 32px;
+      font-size: 13px;
+      padding: 0;
+      border-radius: 6px;
+      background: #2a2a2a;
+      border: 1px solid #444;
+      color: #ccc;
+      font-weight: bold;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s ease-in-out;
+      box-shadow: none;
+      text-shadow: none;
+    }
+    .btn-level:hover {
+      background: #3a3a3a;
+      border-color: #666;
+      transform: translateY(-1px);
+    }
+    .btn-level.active {
+      background: var(--accent);
+      color: #000;
+      border-color: var(--accent);
+      box-shadow: 0 0 10px rgba(243, 156, 18, 0.6);
+    }
+
+    /* Tarjeta de control de disparo */
+    .shot-card {
+      background: var(--panel);
+      padding: 10px;
+      border-radius: 12px;
+      border: 1px solid var(--glass);
+      backdrop-filter: blur(10px);
+      box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      width: 100%;
+      box-sizing: border-box;
+      transition: all 0.3s ease;
+    }
+    #btn-start-shot {
+      width: 100%;
+      height: 48px;
+      border-radius: 10px;
+      font-size: 16px;
+      margin: 0;
+    }
+    #btn-cancel-shot {
+      width: 100%;
+      height: 38px;
+      border-radius: 8px;
+      font-size: 14px;
+      margin: 0;
+    }
+    #lbl-timer {
+      font-size: 26px;
+      font-weight: 800;
+      color: var(--accent);
+      margin-bottom: 8px;
+      text-shadow: 0 0 10px rgba(243, 156, 18, 0.4);
+    }
+  </style>
+</head>
+<body>
+  <div class="viewport">
+    <div class="status-overlay">
+      <div style="display: flex; flex-direction: column; gap: 10px; pointer-events: auto;">
+        <div class="status-badge" id="txt-mode">Modo: Vivo</div>
+        <button id="btn-theme" class="status-badge" style="cursor: pointer; text-align: center; width: 100%; box-sizing: border-box;">Tema Claro</button>
+        <button id="btn-sleep" class="status-badge" style="cursor: pointer; text-align: center; width: 100%; box-sizing: border-box; color: #e74c3c; border-color: #e74c3c;">🔋 Apagar / Cargar</button>
+      </div>
+      
+      <div class="score-container">
+        <div id="txt-score">0.0</div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 10px; pointer-events: auto; width: 160px;">
+        <div class="status-badge" id="txt-shots" style="text-align: center;">Disparos: 0</div>
+        <div class="shot-card" id="card-shot">
+          <div id="sd-warning" style="color: #e74c3c; font-size: 11px; margin-bottom: 8px; display: none; font-weight: bold;">⚠️ Sin MicroSD</div>
+          <button id="btn-start-shot" class="btn-main">🎯 INICIAR TIRO</button>
+          <div id="shot-aiming-info" style="display: none; flex-direction: column; align-items: center; width: 100%;">
+             <div id="lbl-timer">0.0s</div>
+             <button id="btn-cancel-shot" class="btn-danger">❌ Cancelar</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <canvas id="target" width="800" height="800"></canvas>
+    <button id="btn-fullscreen">⛶</button>
+  </div>
+  
+  <div class="controls">
+    <div class="d-pad square-block">
+      <div class="d-center"></div>
+      <button id="btn-up">▲</button>
+      <button id="btn-left">◀</button>
+      <button id="btn-right">▶</button>
+      <button id="btn-down">▼</button>
+    </div>
+    <button id="btn-calib" class="btn-main square-block">CALIBRAR</button>
+    <button id="btn-scale-up" class="btn-action square-block">Zoom +</button>
+    <button id="btn-scale-down" class="btn-action square-block">Zoom -</button>
+
+    <button id="btn-settings" class="btn-action square-block" style="grid-column: span 2;">AJUSTES</button>
+    <button id="btn-download" class="btn-success square-block" style="grid-column: span 2;">📥 HISTORIAL</button>
+  </div>
+
+  <!-- Settings Modal -->
+  <div class="settings-modal" id="modal-settings">
+    <div class="settings-content">
+      <h3>Ajustes de Láser IR</h3>
+      <div class="slider-group">
+        <label><span>Sensibilidad Láser (Nivel)</span><span id="val-thr">9</span></label>
+        <div class="btn-group-row" id="group-thr">
+          <button class="btn-level" data-val="1">1</button>
+          <button class="btn-level" data-val="2">2</button>
+          <button class="btn-level" data-val="3">3</button>
+          <button class="btn-level" data-val="4">4</button>
+          <button class="btn-level" data-val="5">5</button>
+          <button class="btn-level" data-val="6">6</button>
+          <button class="btn-level" data-val="7">7</button>
+          <button class="btn-level" data-val="8">8</button>
+          <button class="btn-level" data-val="9">9</button>
+          <button class="btn-level" data-val="10">10</button>
+        </div>
+      </div>
+      <div class="slider-group">
+        <label><span>Exposición (Oscurecer fondo)</span><span id="val-exp">300</span></label>
+        <input type="range" id="sl-exp" min="10" max="1200" value="300">
+      </div>
+      <div class="slider-group">
+        <label><span>Ganancia Sensibilidad</span><span id="val-gain">0</span></label>
+        <input type="range" id="sl-gain" min="0" max="30" value="0">
+      </div>
+      <div class="slider-group">
+        <label><span>Distancia a la diana (Metros)</span><span id="val-dist">10.0</span></label>
+        <input type="range" id="sl-dist" min="1" max="25" value="10" step="0.5">
+      </div>
+      <div class="slider-group">
+        <label><span>Lente de Cámara (mm)</span><span id="val-lens">25.0</span></label>
+        <input type="range" id="sl-lens" min="1" max="50" value="25" step="0.5">
+      </div>
+      <div class="slider-group">
+        <label><span>Sensibilidad de Sonido (Nivel)</span><span id="val-snd">8</span></label>
+        <div class="btn-group-row" id="group-snd">
+          <button class="btn-level" data-val="1">1</button>
+          <button class="btn-level" data-val="2">2</button>
+          <button class="btn-level" data-val="3">3</button>
+          <button class="btn-level" data-val="4">4</button>
+          <button class="btn-level" data-val="5">5</button>
+          <button class="btn-level" data-val="6">6</button>
+          <button class="btn-level" data-val="7">7</button>
+          <button class="btn-level" data-val="8">8</button>
+          <button class="btn-level" data-val="9">9</button>
+          <button class="btn-level" data-val="10">10</button>
+        </div>
+      </div>
+      <button id="btn-go-focus" class="btn-action" style="width: 100%; margin-bottom: 12px; background: linear-gradient(145deg, #2ecc71, #27ae60); color: #fff; border: none;">🔍 Ajustar Enfoque (Lente)</button>
+      <button id="btn-close-settings" class="btn-main">Cerrar</button>
+    </div>
+  </div>
+
+  <!-- Focus Modal -->
+  <div class="settings-modal" id="modal-focus">
+    <div class="settings-content" style="max-width: 450px; width: 90%; text-align: center;">
+      <h3>Enfoque de Cámara</h3>
+      <p style="font-size: 13px; color: #bbb; margin-bottom: 15px;">
+        Gira la lente M12 físicamente hasta que la imagen se vea nítida.
+      </p>
+      <div style="background: #000; border-radius: 10px; overflow: hidden; margin-bottom: 20px; display: flex; justify-content: center; align-items: center; aspect-ratio: 4/3;">
+        <img id="focus-stream" src="" style="width: 100%; height: 100%; object-fit: contain; background: #222;" alt="Cargando cámara...">
+      </div>
+      <button id="btn-close-focus" class="btn-main" style="width: 100%;">Finalizar Enfoque</button>
+    </div>
+  </div>
+
+  <!-- History Modal -->
+  <div class="settings-modal" id="modal-history">
+    <div class="settings-content" style="max-width: 400px; width: 90%;">
+      <h3>Historial de Sesiones</h3>
+      <div id="history-list" style="display: flex; flex-direction: column; gap: 10px; max-height: 300px; overflow-y: auto; margin-bottom: 20px;">
+        <p style="text-align: center; color: #bbb;">Cargando...</p>
+      </div>
+      <button id="btn-close-history" class="btn-main" style="width: 100%;">Cerrar</button>
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('target');
+    const ctx = canvas.getContext('2d');
+    const canvasW = canvas.width, canvasH = canvas.height;
+    const centerX = canvasW / 2, centerY = canvasH / 2;
+    
+    const issf_d = [155.5, 139.5, 123.5, 107.5, 91.5, 75.5, 59.5, 43.5, 27.5, 11.5];
+    const mmToPx = canvasW / 170; 
+    
+    let isLightMode = false; // Empezamos en oscuro por defecto
+    let cam_distance_m = 10.0, cam_lens_mm = 25.0, calib_x = 0.0, calib_y = 0.0;
+    let loaded_calib = false;
+    let local_shot_count = 0;
+    let aim_start_time = 0;
+    let flip_mode = 0, is_calibrating = false, is_focusing = false;
+    let ui_zoom = 1.0;
+    let calib_shots = [], history_shots = [], trace_points = [];
+
+    function toCanvas(rx, ry) {
+        // 1. Flip
+        let fx = (flip_mode === 1 || flip_mode === 3) ? (320 - rx) : rx;
+        let fy = (flip_mode === 2 || flip_mode === 3) ? (240 - ry) : ry;
+        
+        // 2. Cálculo Matemático de Escala
+        // Tamaño físico de pixel OV3660 QVGA ~ 0.00896 mm (asumiendo binning desde 2048px a 320px)
+        let p_eff = 0.00896; 
+        let focal_length_px = cam_lens_mm / p_eff;
+        let scale_factor = (cam_distance_m * 1000.0) / focal_length_px; // milímetros por píxel
+        
+        // 3. Calibrar y Escalar
+        let cx = (fx - 160.0 - calib_x) * scale_factor;
+        let cy = (fy - 120.0 - calib_y) * scale_factor;
+        
+        return { cx, cy };
+    }
+
+    function drawTarget() {
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, (59.5 / 2) * mmToPx, 0, Math.PI * 2);
+      ctx.fillStyle = '#111'; 
+      ctx.fill();
+
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.lineWidth = 0.5;
+
+      for(let i=0; i<10; i++) {
+          let r = (issf_d[i]/2) * mmToPx;
+          ctx.beginPath(); ctx.arc(centerX, centerY, r, 0, Math.PI*2);
+          ctx.strokeStyle = (i >= 6) ? "rgba(255,255,255,0.6)" : "rgba(0,0,0,0.5)";
+          ctx.stroke();
+
+          if (i < 9) {
+              ctx.fillStyle = (i < 6) ? "#333" : "rgba(255,255,255,0.7)";
+              ctx.font = `bold ${Math.floor(4 * mmToPx)}px sans-serif`;
+              let pos = r - (8 / 2) * mmToPx;
+              let n = (i + 1);
+              ctx.fillText(n, centerX, centerY - pos); ctx.fillText(n, centerX, centerY + pos);
+              ctx.fillText(n, centerX - pos, centerY); ctx.fillText(n, centerX + pos, centerY);
+          }
+      }
+      ctx.beginPath(); ctx.arc(centerX, centerY, (5 / 2) * mmToPx, 0, Math.PI * 2);
+      ctx.strokeStyle = "rgba(255,255,255,0.4)"; ctx.stroke();
+    }
+
+    function drawTrace() {
+      if(trace_points.length < 2) return;
+      ctx.lineWidth = 3; ctx.lineCap = 'round';
+      for(let i=1; i<trace_points.length; i++) {
+         let r1 = trace_points[i-1], r2 = trace_points[i];
+         let p1 = toCanvas(r1.rx, r1.ry), p2 = toCanvas(r2.rx, r2.ry);
+         ctx.strokeStyle = `rgba(52, 152, 219, ${i/trace_points.length})`;
+         ctx.beginPath(); 
+         ctx.moveTo(centerX + p1.cx * mmToPx, centerY + p1.cy * mmToPx); 
+         ctx.lineTo(centerX + p2.cx * mmToPx, centerY + p2.cy * mmToPx); 
+         ctx.stroke();
+      }
+    }
+
+    function drawShots() {
+      history_shots.forEach((s, idx) => {
+         let p = toCanvas(s.rx, s.ry);
+         let px = centerX + p.cx * mmToPx, py = centerY + p.cy * mmToPx, r = (4.5/2) * mmToPx;
+         ctx.beginPath(); ctx.arc(px, py, r, 0, Math.PI*2);
+         ctx.fillStyle = "rgba(231, 76, 60, 0.9)"; ctx.fill();
+         ctx.strokeStyle = "#fff"; ctx.stroke();
+         ctx.fillStyle = "#fff"; ctx.font = "bold 16px sans-serif"; ctx.textAlign = "center";
+         ctx.fillText(idx+1, px, py + 5);
+      });
+    }
+
+    function renderLoop() {
+      // 1. Limpiar fondo sin transformaciones
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.fillStyle = '#fdf5e6'; 
+      ctx.fillRect(0, 0, canvasW, canvasH);
+      
+      // 2. Aplicar zoom visual centrado
+      ctx.translate(centerX, centerY);
+      ctx.scale(ui_zoom, ui_zoom);
+      ctx.translate(-centerX, -centerY);
+      
+      drawTarget(); drawShots(); drawTrace();
+      
+      // Restaurar transformación
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      requestAnimationFrame(renderLoop);
+    }
+    renderLoop();
+
+     async function pollStatus() {
+        if(is_focusing) { setTimeout(pollStatus, 100); return; }
+       try {
+         let res = await fetch('/status');
+         let data = await res.json();
+         
+         if (!loaded_calib && data.cx !== undefined && data.cy !== undefined) {
+             calib_x = data.cx;
+             calib_y = data.cy;
+             if (data.dist !== undefined) {
+                 cam_distance_m = data.dist;
+                 document.getElementById('sl-dist').value = cam_distance_m;
+                 document.getElementById('val-dist').innerText = cam_distance_m.toFixed(1);
+             }
+             if (data.lens !== undefined) {
+                 cam_lens_mm = data.lens;
+                 document.getElementById('sl-lens').value = cam_lens_mm;
+                 document.getElementById('val-lens').innerText = cam_lens_mm.toFixed(1);
+             }
+             loaded_calib = true;
+         }
+         
+         const modeBadge = document.getElementById('txt-mode');
+         if(data.c === 0) {
+             modeBadge.innerText = "¡ERROR DE CÁMARA!";
+             modeBadge.style.background = "#c0392b";
+             modeBadge.style.color = "#fff";
+         } else if (modeBadge.innerText === "¡ERROR DE CÁMARA!") {
+             modeBadge.innerText = is_calibrating ? "Modo: CALIBRANDO" : "Modo: Vivo";
+             modeBadge.style.background = ""; 
+         }
+
+         const sdWarning = document.getElementById('sd-warning');
+         const btnStart = document.getElementById('btn-start-shot');
+         const aimingInfo = document.getElementById('shot-aiming-info');
+         const lblTimer = document.getElementById('lbl-timer');
+         const cardShot = document.getElementById('card-shot');
+
+         if (is_calibrating) {
+             cardShot.style.display = 'none';
+         } else {
+             cardShot.style.display = 'flex';
+         }
+
+         if (data.state === 0) { // STANDBY
+             btnStart.style.display = 'block';
+             aimingInfo.style.display = 'none';
+             if (data.sd === 0) {
+                 sdWarning.style.display = 'block';
+             } else {
+                 sdWarning.style.display = 'none';
+             }
+             
+             // Comprobar si hay un disparo recién guardado
+             if (data.shot_num > local_shot_count) {
+                 let scoreVal = parseFloat(data.score).toFixed(1);
+                 history_shots.push({rx: data.shot_x, ry: data.shot_y, score: scoreVal});
+                 local_shot_count = data.shot_num;
+                 updateHUD();
+             }
+         } else if (data.state === 1) { // AIMING
+             btnStart.style.display = 'none';
+             aimingInfo.style.display = 'flex';
+             sdWarning.style.display = 'none';
+             
+             let elapsed = ((Date.now() - aim_start_time) / 1000).toFixed(1);
+             lblTimer.innerText = elapsed + "s";
+             
+             if (data.v > 0) {
+                 trace_points.push({rx: data.x, ry: data.y});
+                 if(trace_points.length > 50) trace_points.shift();
+             }
+
+             if (is_calibrating && data.s === 1) {
+                 calib_shots.push({rx: data.shot_x, ry: data.shot_y});
+                 updateHUD();
+             }
+         } else if (data.state === 2) { // POST_SHOT
+             btnStart.style.display = 'none';
+             aimingInfo.style.display = 'flex';
+             sdWarning.style.display = 'none';
+             lblTimer.innerText = "¡DISPARADO!";
+             
+             if (data.v > 0) {
+                 trace_points.push({rx: data.x, ry: data.y});
+                 if(trace_points.length > 50) trace_points.shift();
+             }
+         }
+       } catch(e) {}
+       setTimeout(pollStatus, 150);
+    }
+    pollStatus();
+
+     function updateHUD() {
+        document.getElementById("txt-shots").innerText = is_calibrating ? `Calibración: ${calib_shots.length}` : `Disparos: ${history_shots.length}`;
+        if(history_shots.length > 0 && !is_calibrating) {
+            let last = history_shots[history_shots.length-1];
+            document.getElementById("txt-score").innerText = last.score;
+            document.getElementById("txt-score").style.color = (last.score >= 10.0) ? "#f1c40f" : (last.score >= 8.0 ? "#2ecc71" : "#e74c3c");
+        }
+     }
+
+    // Eventos
+
+    function saveCalibration(x, y) {
+        fetch(`/set_calib?x=${x}&y=${y}`);
+    }
+
+    document.getElementById('btn-calib').onclick = function() {
+       if(is_calibrating) {
+           if(calib_shots.length > 0) {
+              let sx=0, sy=0; calib_shots.forEach(s => { sx+=s.rx; sy+=s.ry; });
+              let ax = sx / calib_shots.length, ay = sy / calib_shots.length;
+              if(flip_mode === 1 || flip_mode === 3) ax = 320 - ax;
+              if(flip_mode === 2 || flip_mode === 3) ay = 240 - ay;
+              calib_x = ax - 160.0; 
+              calib_y = ay - 120.0;
+              saveCalibration(calib_x.toFixed(2), calib_y.toFixed(2));
+           }
+           is_calibrating = false; this.innerText = "CALIBRAR";
+           document.getElementById('txt-mode').innerText = "Modo: Vivo";
+           fetch('/stop_calib'); // Volver a Standby en el servidor
+       } else {
+           is_calibrating = true; calib_shots = []; this.innerText = "FINALIZAR CALIBRACIÓN";
+           document.getElementById('txt-mode').innerText = "Modo: CALIBRANDO";
+           fetch('/start_calib'); // Activar cámara en modo calibración en el servidor
+       }
+       updateHUD();
+    };
+
+    const modalHistory = document.getElementById('modal-history');
+    const historyList = document.getElementById('history-list');
+
+    document.getElementById('btn-download').onclick = async () => {
+        modalHistory.style.display = 'flex';
+        historyList.innerHTML = '<p style="text-align: center; color: #bbb;">Cargando...</p>';
+        try {
+            let res = await fetch('/history');
+            let files = await res.json();
+            historyList.innerHTML = '';
+            if (files.length === 0) {
+                historyList.innerHTML = '<p style="text-align: center; color: #bbb;">No hay sesiones guardadas.</p>';
+            } else {
+                files.forEach(f => {
+                    let btn = document.createElement('button');
+                    btn.className = 'btn-action';
+                    btn.style.width = '100%';
+                    btn.style.padding = '10px';
+                    btn.style.textAlign = 'left';
+                    btn.style.display = 'flex';
+                    btn.style.justifyContent = 'space-between';
+                    btn.innerHTML = `<span>📄 ${f}</span><span style="color: #2ecc71;">⬇️</span>`;
+                    btn.onclick = () => { window.location.href = '/download?file=' + f; };
+                    historyList.appendChild(btn);
+                });
+            }
+        } catch(e) {
+            historyList.innerHTML = '<p style="text-align: center; color: #e74c3c;">Error al cargar historial</p>';
+        }
+    };
+    document.getElementById('btn-close-history').onclick = () => modalHistory.style.display = 'none';
+
+    document.getElementById('btn-up').onclick    = () => { calib_y += 2; saveCalibration(calib_x, calib_y); };
+    document.getElementById('btn-down').onclick  = () => { calib_y -= 2; saveCalibration(calib_x, calib_y); };
+    document.getElementById('btn-left').onclick  = () => { calib_x += 2; saveCalibration(calib_x, calib_y); };
+    document.getElementById('btn-right').onclick = () => { calib_x -= 2; saveCalibration(calib_x, calib_y); };
+    document.getElementById('btn-scale-up').onclick   = () => { ui_zoom += 0.1; };
+    document.getElementById('btn-scale-down').onclick = () => { ui_zoom = Math.max(0.2, ui_zoom - 0.1); };
+    
+    document.getElementById('btn-fullscreen').onclick = () => {
+        if (!document.fullscreenElement) { document.documentElement.requestFullscreen(); }
+        else { document.exitFullscreen(); }
+    };
+    
+    document.getElementById('btn-theme').onclick = () => {
+        isLightMode = !isLightMode;
+        if (isLightMode) {
+            document.body.classList.add('light-theme');
+            document.getElementById('btn-theme').innerText = 'Tema Oscuro';
+        } else {
+            document.body.classList.remove('light-theme');
+            document.getElementById('btn-theme').innerText = 'Tema Claro';
+        }
+    };
+
+    document.getElementById('btn-sleep').onclick = () => {
+        if(confirm("¿Apagar placa para cargar?\n\nRecuerda: Para volver a usarla deberás desconectar el USB y reiniciar la placa con tu interruptor físico.")) {
+            document.body.innerHTML = "<h2 style='text-align:center; margin-top:20vh; color:#2ecc71;'>Placa en Modo Carga (Apagada)</h2><p style='text-align:center; font-size:18px;'>Toda la energía del USB ahora va a la batería.<br><br><b>Para volver a jugar:</b><br>1. Desconecta el USB<br>2. Apaga tu interruptor físico<br>3. Vuelve a encenderlo</p>";
+            fetch('/sleep');
+        }
+    };
+
+    // Settings Modal
+    const modal = document.getElementById('modal-settings');
+    document.getElementById('btn-settings').onclick = () => modal.style.display = 'flex';
+    document.getElementById('btn-close-settings').onclick = () => modal.style.display = 'none';
+
+    // Mapeos de nivel 1-10 a valores internos de umbral
+    const thrMap = [200, 180, 160, 140, 120, 100, 80, 60, 40, 20]; // 1 -> 200, 10 -> 20
+    const sndMap = [40000, 30000, 20000, 12000, 8000, 5000, 3000, 2000, 1000, 500]; // 1 -> 40000, 10 -> 500
+    
+    let currentLaserLevel = 9; // Por defecto corresponde a thr = 40
+    let currentSoundLevel = 8; // Por defecto corresponde a snd = 2000
+
+    const sExp = document.getElementById('sl-exp'), sGain = document.getElementById('sl-gain');
+    const sDist = document.getElementById('sl-dist'), sLens = document.getElementById('sl-lens');
+    
+    function sendSettings() {
+        document.getElementById('val-exp').innerText = sExp.value;
+        document.getElementById('val-gain').innerText = sGain.value;
+        cam_distance_m = parseFloat(sDist.value);
+        document.getElementById('val-dist').innerText = cam_distance_m.toFixed(1);
+        cam_lens_mm = parseFloat(sLens.value);
+        document.getElementById('val-lens').innerText = cam_lens_mm.toFixed(1);
+        
+        const thrVal = thrMap[currentLaserLevel - 1];
+        const sndVal = sndMap[currentSoundLevel - 1];
+        
+        fetch(`/set?thr=${thrVal}&exp=${sExp.value}&gain=${sGain.value}&snd=${sndVal}&dist=${cam_distance_m}&lens=${cam_lens_mm}`);
+    }
+    
+    sExp.onchange = sendSettings;
+    sGain.onchange = sendSettings;
+    sDist.oninput = () => { 
+        cam_distance_m = parseFloat(sDist.value); 
+        document.getElementById('val-dist').innerText = cam_distance_m.toFixed(1); 
+    };
+    sDist.onchange = sendSettings;
+    sLens.oninput = () => { 
+        cam_lens_mm = parseFloat(sLens.value); 
+        document.getElementById('val-lens').innerText = cam_lens_mm.toFixed(1); 
+    };
+    sLens.onchange = sendSettings;
+
+    // Configuración de botones de nivel
+    function setupButtonGroups() {
+        const laserButtons = document.querySelectorAll('#group-thr .btn-level');
+        laserButtons.forEach(btn => {
+            btn.onclick = () => {
+                laserButtons.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                currentLaserLevel = parseInt(btn.getAttribute('data-val'));
+                document.getElementById('val-thr').innerText = currentLaserLevel;
+                sendSettings();
+            };
+            if (parseInt(btn.getAttribute('data-val')) === currentLaserLevel) {
+                btn.classList.add('active');
+            }
+        });
+
+        const soundButtons = document.querySelectorAll('#group-snd .btn-level');
+        soundButtons.forEach(btn => {
+            btn.onclick = () => {
+                soundButtons.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                currentSoundLevel = parseInt(btn.getAttribute('data-val'));
+                document.getElementById('val-snd').innerText = currentSoundLevel;
+                sendSettings();
+            };
+            if (parseInt(btn.getAttribute('data-val')) === currentSoundLevel) {
+                btn.classList.add('active');
+            }
+        });
+    }
+    setupButtonGroups();
+
+    // Configuración de Enfoque de Cámara
+    const modalFocus = document.getElementById('modal-focus');
+    const focusImg = document.getElementById('focus-stream');
+
+    function loadNextFocusFrame() {
+        if (!is_focusing) return;
+        focusImg.src = '/capture?t=' + Date.now();
+    }
+
+    focusImg.onload = () => {
+        if (is_focusing) {
+            setTimeout(loadNextFocusFrame, 50); // espera 50ms antes de la siguiente captura
+        }
+    };
+
+    focusImg.onerror = () => {
+        if (is_focusing) {
+            setTimeout(loadNextFocusFrame, 500); // si falla, reintenta tras 500ms
+        }
+    };
+
+    document.getElementById('btn-go-focus').onclick = () => {
+        modal.style.display = 'none'; // oculta ajustes
+        modalFocus.style.display = 'flex'; // muestra enfoque
+        is_focusing = true;
+        loadNextFocusFrame();
+    };
+
+    document.getElementById('btn-close-focus').onclick = () => {
+        modalFocus.style.display = 'none';
+        is_focusing = false;
+        focusImg.src = ''; // limpia la imagen para no consumir memoria/datos
+        modal.style.display = 'flex'; // vuelve a mostrar ajustes
+    };
+
+    // Botones de disparo
+    document.getElementById('btn-start-shot').onclick = () => {
+        trace_points = [];
+        aim_start_time = Date.now();
+        fetch('/start_shot');
+    };
+
+    document.getElementById('btn-cancel-shot').onclick = () => {
+        fetch('/cancel_shot');
+    };
+    
+    // Keyboard Shortcuts
+    window.onkeydown = function(e) {
+        let k = e.key.toUpperCase();
+        if(k === "ARROWUP")    { e.preventDefault(); calib_y += 2; saveCalibration(calib_x, calib_y); }
+        if(k === "ARROWDOWN")  { e.preventDefault(); calib_y -= 2; saveCalibration(calib_x, calib_y); }
+        if(k === "ARROWLEFT")  { e.preventDefault(); calib_x += 2; saveCalibration(calib_x, calib_y); }
+        if(k === "ARROWRIGHT") { e.preventDefault(); calib_x -= 2; saveCalibration(calib_x, calib_y); }
+        if(k === "+") ui_zoom += 0.1;
+        if(k === "-") ui_zoom = Math.max(0.2, ui_zoom - 0.1);
+        if(k === "9") { 
+            let s = document.getElementById('sl-dist');
+            s.value = Math.min(25, parseFloat(s.value) + 0.5);
+            sendSettings(); 
+        }
+        if(k === "7") { 
+            let s = document.getElementById('sl-dist');
+            s.value = Math.max(1, parseFloat(s.value) - 0.5);
+            sendSettings(); 
+        }
+    };
+
+  </script>
+</body>
+</html>
