@@ -61,6 +61,7 @@ bool has_shot = false;
 float current_x = 160.0;
 float current_y = 120.0;
 int current_v = 0;
+unsigned long last_debug_print = 0; // Global variable for debug timing
 int focus_value = 0;
 unsigned long last_laser_seen_time = 0;
 
@@ -418,10 +419,17 @@ void loop() {
     } else {
       // Detección normal de láser
       int max_val = 0;
-      for (int i = 0; i < fb->width * fb->height; i++) {
-        uint8_t val = fb->buf[i];
-        if (val > max_val) {
-          max_val = val;
+      int max_x = 0;
+      int max_y = 0;
+      for (int y = 0; y < fb->height; y++) {
+        for (int x = 0; x < fb->width; x++) {
+          int idx = y * fb->width + x;
+          uint8_t val = fb->buf[idx];
+          if (val > max_val) {
+            max_val = val;
+            max_x = x;
+            max_y = y;
+          }
         }
       }
 
@@ -432,8 +440,15 @@ void loop() {
         int threshold = max_val - 20; 
         if (threshold < detect_threshold) threshold = detect_threshold;
 
-        for (int y = 0; y < fb->height; y++) {
-          for (int x = 0; x < fb->width; x++) {
+        // Búsqueda en una ventana local de +/- 7 píxeles alrededor de la coordenada máxima
+        int radius = 7;
+        int start_x = (max_x - radius > 0) ? (max_x - radius) : 0;
+        int end_x = (max_x + radius < fb->width - 1) ? (max_x + radius) : (fb->width - 1);
+        int start_y = (max_y - radius > 0) ? (max_y - radius) : 0;
+        int end_y = (max_y + radius < fb->height - 1) ? (max_y + radius) : (fb->height - 1);
+
+        for (int y = start_y; y <= end_y; y++) {
+          for (int x = start_x; x <= end_x; x++) {
             int idx = y * fb->width + x;
             uint8_t val = fb->buf[idx];
             if (val >= threshold) {
@@ -452,6 +467,22 @@ void loop() {
         }
       } else {
         current_v = 0;
+      }
+
+      // Print debug info to Serial Monitor every 1 second
+      if (millis() - last_debug_print > 1000) {
+        if (current_v > 0) {
+          Serial.print("LASER DETECTADO -> Intensidad: ");
+          Serial.print(current_v);
+          Serial.print(" | Pos X: ");
+          Serial.print(current_x);
+          Serial.print(" | Pos Y: ");
+          Serial.println(current_y);
+        } else {
+          Serial.print("LASER NO DETECTADO -> Intensidad Max: ");
+          Serial.println(max_val);
+        }
+        last_debug_print = millis();
       }
     }
     

@@ -21,7 +21,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import com.splatt.elite.ui.theme.AccentColor
 
 data class ShotPoint(val x: Float, val y: Float, val label: String)
-data class TracePoint(val x: Float, val y: Float, val color: Color)
+data class TracePoint(val x: Float, val y: Float, val color: Color, val timeMs: Long = 0L)
 
 @Composable
 fun TargetView(
@@ -64,13 +64,13 @@ fun TargetView(
 
             // Function to map ESP32 coordinates (0-320, 0-240) to millimeter offset from center
             fun toMm(rx: Float, ry: Float): Offset {
-                val pEff = 0.00896f
+                val pEff = 0.011f
                 val focalLengthPx = lensMm / pEff
                 val scaleFactor = (distanceM * 1000.0f) / focalLengthPx
                 
-                // Flip mode (standard is flipped/unflipped, we apply standard conversion)
-                val cx = -(rx - 160.0f - calibX) * scaleFactor
-                val cy = -(ry - 120.0f - calibY) * scaleFactor
+                // Convert to center offsets (without inversion)
+                val cx = (rx - 160.0f - calibX) * scaleFactor
+                val cy = (ry - 120.0f - calibY) * scaleFactor
                 return Offset(cx, cy)
             }
 

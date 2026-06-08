@@ -146,19 +146,39 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
         }
         
         if (status.state == 2 && lastState != 2) {
+            // Use the last valid trace point to ensure the impact perfectly matches the visual trace
+            val lastValidTrace = trace.lastOrNull { it.x != 0.0f && it.y != 0.0f }
+            val finalShotX = lastValidTrace?.x ?: status.shotX
+            val finalShotY = lastValidTrace?.y ?: status.shotY
+
             // Calculate score locally
-            val cx = status.shotX - 160.0f - calibX
-            val cy = status.shotY - 120.0f - calibY
+            val cx = finalShotX - 160.0f - calibX
+            val cy = finalShotY - 120.0f - calibY
             val distPixels = kotlin.math.sqrt((cx * cx) + (cy * cy))
             
-            val pEff = 0.00896f
+            val pEff = 0.011f
             val focalLengthPx = lensMm / pEff
             val scaleFactor = (distM * 1000.0f) / focalLengthPx
             
-            val calculatedScore = 10.9f - ((distPixels * scaleFactor) / 8.0f)
-            localScore = calculatedScore.coerceAtLeast(0.0f)
+            val calculatedScore = 11.0f - ((distPixels * scaleFactor) / 8.0f)
+            localScore = calculatedScore.coerceIn(0.0f, 10.9f)
             
-            shots.add(ShotPoint(status.shotX, status.shotY, String.format(Locale.US, "%.1f", localScore)))
+            shots.add(ShotPoint(finalShotX, finalShotY, String.format(Locale.US, "%.1f", localScore)))
+            
+            if (!isCalibrating) {
+                val shotTime = status.time
+                val repaintedTrace = trace.map { pt ->
+                    val timeBeforeShot = shotTime - pt.timeMs
+                    val newColor = when {
+                        timeBeforeShot <= 1000 -> Color.Green
+                        timeBeforeShot <= 2000 -> Color(0xFFE67E22) // Naranja / Orange
+                        else -> Color(0xFF1B4F72) // Azul oscuro / Dark Blue
+                    }
+                    pt.copy(color = newColor)
+                }
+                trace.clear()
+                trace.addAll(repaintedTrace)
+            }
         }
 
         // Clear trace only when starting a new shot (entering state 1)
@@ -170,19 +190,11 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
             if (status.v > 0) {
                 val traceColor = when {
                     isCalibrating -> Color.Green
-                    status.state == 2 -> Color.Green // post-disparo
-                    status.state == 1 -> {
-                        when {
-                            status.time < 4000 -> Color.Green
-                            status.time < 8000 -> Color(0xFFE67E22) // Calabaza / Orange
-                            status.time < 12000 -> Color(0xFF1B4F72) // Azul oscuro / Dark Blue
-                            else -> Color.Red
-                        }
-                    }
-                    else -> Color.Green
+                    status.state == 2 -> Color.Red // post-disparo
+                    else -> Color(0xFF1B4F72) // Azul oscuro / Dark Blue
                 }
                 
-                trace.add(TracePoint(status.x, status.y, traceColor))
+                trace.add(TracePoint(status.x, status.y, traceColor, status.time))
                 // Se incrementa el límite a 5000 para no borrar la traza entera
                 if (trace.size > 5000) {
                     trace.removeAt(0)

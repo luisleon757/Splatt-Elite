@@ -78,13 +78,69 @@ Para asegurar que tus disparos virtuales se correspondan exactamente con tus mir
 - **Puntuación ISSF**: El sistema calcula la puntuación en base a las coordenadas exactas de impacto, con precisión decimal (p.ej., `10.9` para un centro perfecto).
 - **Guardado y Sesiones (CSV)**: Todos los datos (número de disparo, coordenadas raw y puntuación) de la sesión se almacenan en la app y pueden exportarse a un archivo **.csv** universal usando el botón **📥 Exportar CSV**.
 
-### 5. Ajustes de Sensibilidad, Distancia y Exposición
-A través del menú de configuración en la app, puedes ajustar los parámetros en tiempo real:
-- **Distancia a la diana y Lente**: Puedes ajustar de forma variable (mediante deslizadores) la distancia física a la diana (1 a 25 metros) y la distancia focal de tu lente (ej. 25mm). La aplicación escalará matemáticamente el tamaño de la diana para mantener una medición ISSF perfecta sin importar dónde te coloques.
-- **Sensibilidad del Láser (detect_threshold)**: Umbral mínimo de brillo para que un punto sea considerado láser. Auméntalo si hay reflejos del sol o luces de la habitación que causen falsas detecciones.
-- **Exposición de la Cámara (cam_exposure)**: Tiempo de exposición del sensor (en ms). Un valor bajo oscurece la imagen de fondo de modo que solo el punto brillante del láser sea visible.
-- **Sensibilidad de Sonido (audio_threshold)**: Nivel *mínimo* de volumen para activar el disparo.
-- **Rechazo de Ruido Fuerte (max_snd)**: Nivel *máximo* de ruido permitido. Cualquier ruido que supere este nivel será ignorado. Esto sirve para que la aplicación no se dispare al cerrar una puerta, dar una palmada o hablar fuerte, garantizando que solo captura el clic mecánico de tu arma. Ponlo al "10" si quieres desactivarlo.
+### 5. Ajustes del Sistema y Utilidad de los Controles
+
+Para acceder a este menú, presiona el botón **Ajustes** en la parte inferior derecha de la pantalla principal (debe estar conectado el dispositivo por BLE). Estos controles te permiten adaptar el entrenador a las condiciones de iluminación de tu habitación, la acústica de tu arma de entrenamiento y las dimensiones físicas de tu galería de tiro.
+
+A continuación se detalla el funcionamiento de cada control, sus rangos de valores y su utilidad práctica:
+
+#### 1. Sensibilidad Láser (Nivel: 1 - 10)
+*   **¿Qué hace?**: Controla el umbral de detección (`detect_threshold` o `thr` en el firmware) para el punto del láser.
+    *   *Fórmula interna:* Se envía el comando BLE `thr:${(11 - sensibilidad) * 5}`.
+    *   **Nivel 10 (Más sensible)**: Envía un umbral muy bajo (`thr:5`), detectando láseres poco intensos o de baterías gastadas.
+    *   **Nivel 1 (Menos sensible)**: Envía un umbral alto (`thr:50`), requiriendo un láser extremadamente brillante para ser detectado.
+*   **Utilidad práctica**: 
+    *   Si experimentas "falsos disparos" o "trazas fantasma" debido a reflejos de luz solar, focos de luz en la habitación o superficies brillantes, **reduce la sensibilidad** (p.ej., a nivel 3 o 4).
+    *   Si la traza del láser se corta o desaparece al mover rápidamente el arma, **aumenta la sensibilidad** (p.ej., a nivel 8 o 9).
+
+#### 2. Exposición (Oscurecer fondo) (Rango: 10 - 1200 ms)
+*   **¿Qué hace?**: Ajusta el tiempo de exposición del sensor de la cámara (`exp` en el firmware).
+*   **Utilidad práctica**:
+    *   **Oscurecer la imagen de fondo** es clave para que el algoritmo del ESP32 aísle el láser. Un valor de exposición bajo (como 150-300 ms) hará que todo el fondo se vea negro y solo resalte el punto luminoso del láser.
+    *   Si juegas en una habitación muy iluminada o frente a una ventana, **reduce la exposición** (p.ej., a 100-200 ms) para eliminar el ruido ambiental.
+    *   Si estás en un ambiente oscuro y el láser apenas es visible para el sensor, **aumenta la exposición** (p.ej., a 400-600 ms). *Nota: Exposiciones demasiado altas pueden limitar los frames por segundo (FPS) de la captura.*
+
+#### 3. Ganancia Sensibilidad (Rango: 0 - 30)
+*   **¿Qué hace?**: Controla la amplificación de la señal del sensor de imagen (`gain` en el firmware).
+*   **Utilidad práctica**:
+    *   Permite amplificar el brillo del láser mediante software en el sensor sin aumentar el tiempo de exposición.
+    *   Si tu láser IR es débil pero necesitas mantener la exposición baja para capturar a altos FPS, sube la ganancia a un valor moderado (p.ej., 5 a 15).
+    *   *Recomendación:* Intenta mantenerla en `0` o lo más baja posible para evitar ruido digital (grano en la imagen), el cual puede generar vibración o inestabilidad en la traza.
+
+#### 4. Distancia a la diana (Metros) (Rango: 1.0m - 25.0m)
+*   **¿Qué hace?**: Ajusta el parámetro de distancia física entre la boca del cañón/cámara y la diana de papel (ajuste puramente local en la App Android).
+*   **Utilidad práctica**:
+    *   Es fundamental para calcular correctamente la puntuación ISSF (desde 0.0 hasta 10.9). Al cambiar la distancia, la aplicación realiza un escalado matemático que adapta la escala milimétrica de los anillos olímpicos a la perspectiva física captada por la cámara.
+    *   *Fórmula de escala:* `scaleFactor = (distancia_metros * 1000) / (lente_mm / 0.0022)`.
+    *   Debes configurar este control con la distancia exacta medida con cinta métrica en tu lugar de entrenamiento para garantizar puntuaciones 100% realistas y comparables con una galería de tiro real.
+
+#### 5. Lente de Cámara (mm) (Rango: 1.0mm - 50.0mm)
+*   **¿Qué hace?**: Configura la distancia focal de la lente física M12 que tienes enroscada en el ESP32 Sense (ajuste local en la App Android). La lente predeterminada suele ser de **25.0 mm** (ofrece un zoom óptico excelente para disparar a 10 metros).
+*   **Utilidad práctica**:
+    *   Junto con el control de distancia, le dice a la app cuánto zoom óptico tiene la imagen. Si cambias de lente (por ejemplo, a una de 12mm o 16mm para espacios más reducidos), debes ajustar este valor aquí para no alterar los cálculos de puntuación.
+
+#### 6. Sensibilidad de Sonido (Nivel: 1 - 10)
+*   **¿Qué hace?**: Controla el nivel de volumen mínimo del micrófono PDM integrado en la placa necesario para registrar un disparo (`snd` en el firmware).
+    *   *Fórmula interna:* Se envía el comando BLE `snd:${nivel * 250}`.
+    *   **Nivel 1 (Más sensible)**: Requiere muy poca energía acústica (`snd:250`) para detonar.
+    *   **Nivel 10 (Menos sensible)**: Requiere un golpe fuerte (`snd:2500`) para registrar el disparo.
+*   **Utilidad práctica**:
+    *   Ajusta este parámetro para que la aplicación capture el sonido de la aguja percutora o el "clic" metálico del disparador al realizar tiro en seco (dry-fire).
+    *   Si usas carabina de aire comprimido o el mecanismo de tu arma es muy ruidoso, selecciona un valor más alto (p.ej., nivel 7 a 9) para evitar que el simple roce de los dedos con el arma o la respiración fuerte actúen como disparador.
+
+#### 7. Rechazo de Ruido Fuerte (Nivel: 1 - 10)
+*   **¿Qué hace?**: Define un límite superior de volumen acústico (`max_snd` en el firmware) para ignorar ruidos ambientales no deseados.
+    *   *Fórmula interna:* Se envía el comando BLE `max_snd:${nivel * 250}`.
+    *   **Nivel 10 (Desactivado)**: Ignora este filtro; cualquier sonido que supere la sensibilidad básica registrará un disparo.
+    *   **Nivel 1 a 9 (Activo)**: Si el micrófono detecta un sonido por encima del valor fijado, se asume que es un ruido ajeno (p.ej. una palmada, cerrar una puerta, hablar fuerte o dejar una botella en la mesa) y el disparo es **ignorado**.
+*   **Utilidad práctica**:
+    *   Actívalo y pruébalo si entrenas en entornos con eco o con otras personas en casa. Te permite "blindar" el sistema para que responda únicamente al rango exacto de volumen que genera el percutor de tu arma.
+
+#### 8. Botón: Ajustar Enfoque (Lente)
+*   **¿Qué hace?**: Abre la ventana flotante del Asistente de Enfoque.
+*   **Utilidad práctica**:
+    *   Dado que no se transmite video por BLE, este asistente muestra un valor numérico de nitidez de la imagen. 
+    *   Coloca el dispositivo apuntando a la diana física. Abre el asistente y gira la lente física M12 lentamente. El valor numérico subirá o bajará. Aprieta la lente cuando alcances el **pico numérico más alto** posible. Esto asegura una captura nítida y sin distorsiones del punto láser.
 
 ---
 
