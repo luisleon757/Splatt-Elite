@@ -25,7 +25,7 @@ El sistema se compone de dos componentes principales: el **Hardware Emisor/Senso
 
 ```mermaid
 graph TD
-    A[Pistola/Carabina con Láser IR o Rojo] -->|Láser continuo apuntando| B(XIAO ESP32S3 Sense)
+    A[Pistola/Carabina apuntando a la diana] -->|Sensor de imagen captando la diana| B(XIAO ESP32S3 Sense)
     C[Golpe del disparador/martillo] -->|Sensor MPU6050 HW-123| B
     B -->|Procesa imagen e inclinación| D{¿Disparo detectado?}
     D -->|Sí| E[Envía posición por BLE]
