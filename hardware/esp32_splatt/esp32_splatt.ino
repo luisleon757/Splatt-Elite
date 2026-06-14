@@ -4,10 +4,7 @@
 #include <BLEServer.h>
 #include <BLEUtils.h>
 #include <BLE2902.h>
-#include <ESP_I2S.h>
 #include <Wire.h>
-
-I2SClass I2S;
 
 // ==========================================
 // CONFIGURACIÓN BLE
@@ -46,11 +43,21 @@ bool deviceConnected = false;
 #define PCLK_GPIO_NUM    13
 
 // ==========================================
-// MICRÓFONO DIGITAL (I2S - PDM XIAO SENSE)
+// MPU6050 (HW-123) ACELERÓMETRO/INCLINÓMETRO
 // ==========================================
-#define I2S_PORT I2S_NUM_0
-#define I2S_WS 42  // CLK
-#define I2S_SD 41  // DAT
+#define I2C_SDA_PIN 5
+#define I2C_SCL_PIN 6
+#define IMU_INT_PIN 4
+
+#define MPU6050_ADDR         0x68
+#define MPU6050_ACCEL_CONFIG 0x1C
+#define MPU6050_MOT_THR      0x1F
+#define MPU6050_MOT_DUR      0x20
+#define MPU6050_INT_PIN_CFG  0x37
+#define MPU6050_INT_ENABLE   0x38
+#define MPU6050_INT_STATUS   0x3A
+#define MPU6050_ACCEL_XOUT_H 0x3B
+#define MPU6050_PWR_MGMT_1   0x6B
 
 // Variables Volátiles para la Interrupción/Tarea
 volatile bool shotDetected = false;
@@ -69,8 +76,7 @@ unsigned long last_laser_seen_time = 0;
 enum SystemState {
   STATE_STANDBY,
   STATE_AIMING,
-  STATE_POST_SHOT,
-  STATE_FOCUSING
+  STATE_POST_SHOT
 };
 volatile SystemState currentState = STATE_STANDBY;
 
@@ -82,52 +88,85 @@ unsigned long aim_duration_ms = 0;
 bool isCalibratingServer = false;
 
 // Configuración de Ajustes de Detección IR
-int detect_threshold = 40; 
+int detect_threshold = 80; 
 int cam_exposure = 300;     
 int cam_gain = 0;           
 int audio_threshold = 2000; 
 int max_audio_threshold = 60000; 
 
+void updateMpuThreshold(int ui_value) {
+  // Mapeamos ui_value (250 a 2500) a un umbral del MPU6050
+  // Para el usuario, 10 (ui_value=2500) es muy sensible -> MPU_THR muy bajo
+  // Para el usuario, 1 (ui_value=250) es poco sensible -> MPU_THR alto
+  uint8_t mpu_thr = map(ui_value, 250, 2500, 25, 2);
+  Wire.beginTransmission(MPU6050_ADDR);
+  Wire.write(MPU6050_MOT_THR);
+  Wire.write(mpu_thr);
+  Wire.endTransmission();
+}
+
 // ==========================================
-// TAREA FREERTOS: LECTURA DE AUDIO I2S
+// INTERRUPCIÓN HARDWARE (GOLPE DETECTADO)
 // ==========================================
-void i2sAudioTask(void *pvParameters) {
-  while (1) {
-    if (currentState != STATE_AIMING) {
-      vTaskDelay(100 / portTICK_PERIOD_MS);
-      continue;
-    }
-    int32_t audio_energy = 0;
-    int samples_read = 0;
-    int16_t min_sample = 32767;
-    int16_t max_sample = -32768;
-    
-    for (int i = 0; i < 128; i++) {
-      int sample = I2S.read();
-      if (sample != -1 && sample != 0) {
-        int16_t val = (int16_t)sample;
-        if (val < min_sample) min_sample = val;
-        if (val > max_sample) max_sample = val;
-        samples_read++;
+void IRAM_ATTR detectShock() {
+  if (currentState == STATE_AIMING) {
+    unsigned long currentTime = millis();
+    if (currentTime - lastShotTime > 5000) {
+      if (lastShotTime == 0 && currentTime < 5000) {
+        lastShotTime = currentTime;
+      } else {
+        shotDetected = true;
+        lastShotTime = currentTime;
       }
     }
-    
-    if (samples_read > 0 && max_sample >= min_sample) {
-      audio_energy = max_sample - min_sample;
-    }
-    
-    if (audio_energy > audio_threshold && audio_energy < max_audio_threshold) {
-      unsigned long currentTime = millis();
-      if (currentTime - lastShotTime > 5000) {
-        if (lastShotTime == 0 && currentTime < 5000) {
-          lastShotTime = currentTime;
-        } else {
-          shotDetected = true;
-          lastShotTime = currentTime;
+  }
+}
+
+// ==========================================
+// TAREA FREERTOS: INCLINÓMETRO Y ESTADO MPU
+// ==========================================
+void imuTask(void *pvParameters) {
+  while (1) {
+    if (currentState == STATE_AIMING || currentState == STATE_STANDBY) {
+      // Leer Acelerómetro para Inclinómetro (Pitch)
+      Wire.beginTransmission(MPU6050_ADDR);
+      Wire.write(MPU6050_ACCEL_XOUT_H);
+      Wire.endTransmission(false);
+      Wire.requestFrom(MPU6050_ADDR, 6, true);
+      
+      if (Wire.available() == 6) {
+        int16_t ax = Wire.read() << 8 | Wire.read();
+        int16_t ay = Wire.read() << 8 | Wire.read();
+        int16_t az = Wire.read() << 8 | Wire.read();
+        
+        // Calculamos la inclinación (Pitch) para montaje VERTICAL (Placa en la cara trasera del arma)
+        // El eje Z apunta hacia ti (horizontal). La gravedad recae en X e Y.
+        float pitch = atan2((float)az, sqrt((float)ax*ax + (float)ay*ay)) * 180.0 / PI;
+        
+        if (currentState == STATE_STANDBY) {
+          if (abs(pitch) < 20.0) { // Arma horizontal +/- 20 grados
+            currentState = STATE_AIMING;
+            shotDetected = false;
+            aim_start_time = millis();
+            Serial.println("INCLINOMETRO: Arma levantada. Modo APUNTANDO.");
+          }
+        } else if (currentState == STATE_AIMING) {
+          if (abs(pitch) > 30.0) { // Arma bajada o descansando
+            currentState = STATE_STANDBY;
+            has_shot = false;
+            Serial.println("INCLINOMETRO: Arma bajada. Modo STANDBY.");
+          }
         }
       }
+      
+      // Limpiar el registro de interrupciones del MPU6050
+      Wire.beginTransmission(MPU6050_ADDR);
+      Wire.write(MPU6050_INT_STATUS);
+      Wire.endTransmission(false);
+      Wire.requestFrom(MPU6050_ADDR, 1, true);
+      if (Wire.available()) { Wire.read(); }
     }
-    vTaskDelay(10 / portTICK_PERIOD_MS); 
+    vTaskDelay(100 / portTICK_PERIOD_MS); // 10Hz es suficiente para el Inclinómetro
   }
 }
 
@@ -173,10 +212,6 @@ class MyCommandCallbacks: public BLECharacteristicCallbacks {
           has_shot = false;
         } else if (cmd == "sleep") {
           esp_deep_sleep_start();
-        } else if (cmd == "start_focus") {
-          currentState = STATE_FOCUSING;
-        } else if (cmd == "stop_focus") {
-          currentState = STATE_STANDBY;
         }
       }
     }
@@ -201,6 +236,7 @@ class MyConfigCallbacks: public BLECharacteristicCallbacks {
       }
       else if (config.startsWith("snd:")) {
         audio_threshold = config.substring(4).toInt();
+        updateMpuThreshold(audio_threshold);
       }
       else if (config.startsWith("max_snd:")) {
         max_audio_threshold = config.substring(8).toInt();
@@ -306,15 +342,52 @@ void setup() {
     }
   }
 
-  // Configuración del Micrófono (PDM - XIAO SENSE)
-  I2S.setPinsPdmRx(42, 41);
-  if (!I2S.begin(I2S_MODE_PDM_RX, 16000, I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO)) {
-    Serial.println("Error: Fallo al inicializar el micrófono I2S.");
-  } else {
-    Serial.println("Micrófono I2S Inicializado OK");
-  }
+  // Configuración del MPU6050 (I2C)
+  Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
+  Wire.setClock(400000); // 400kHz I2C
 
-  xTaskCreatePinnedToCore(i2sAudioTask, "AudioTask", 4096, NULL, 1, NULL, 1);
+  // Despertar MPU6050
+  Wire.beginTransmission(MPU6050_ADDR);
+  Wire.write(MPU6050_PWR_MGMT_1);
+  Wire.write(0x00);
+  if(Wire.endTransmission() == 0) {
+    Serial.println("MPU6050 (HW-123) Inicializado OK");
+    
+    // Configurar Acelerómetro (+/- 8g)
+    Wire.beginTransmission(MPU6050_ADDR);
+    Wire.write(MPU6050_ACCEL_CONFIG);
+    Wire.write(0x10); 
+    Wire.endTransmission();
+    
+    // Configurar Duración de Interrupción de Movimiento
+    Wire.beginTransmission(MPU6050_ADDR);
+    Wire.write(MPU6050_MOT_DUR);
+    Wire.write(1); // 1 ms
+    Wire.endTransmission();
+    
+    // Configurar Umbral Inicial
+    updateMpuThreshold(audio_threshold);
+    
+    // Activar Interrupción de Movimiento
+    Wire.beginTransmission(MPU6050_ADDR);
+    Wire.write(MPU6050_INT_ENABLE);
+    Wire.write(0x40); // MOT_EN
+    Wire.endTransmission();
+    
+    // Configurar pin INT (Push-Pull, Active High)
+    Wire.beginTransmission(MPU6050_ADDR);
+    Wire.write(MPU6050_INT_PIN_CFG);
+    Wire.write(0x00);
+    Wire.endTransmission();
+    
+    // Configurar Interrupción en ESP32
+    pinMode(IMU_INT_PIN, INPUT_PULLUP);
+    attachInterrupt(digitalPinToInterrupt(IMU_INT_PIN), detectShock, RISING);
+    
+    xTaskCreatePinnedToCore(imuTask, "IMUTask", 4096, NULL, 1, NULL, 1);
+  } else {
+    Serial.println("Error: Fallo al comunicarse con MPU6050 por I2C.");
+  }
 }
 
 // ==========================================
@@ -330,9 +403,9 @@ void loop() {
       "{\"state\":%d,\"shot_x\":%.2f,\"shot_y\":%.2f,\"time\":%lu,\"x\":%.2f,\"y\":%.2f,\"v\":%d,\"s\":%d,\"c\":%d,\"f\":%d}",
       (int)currentState, shot_x, shot_y, 
       (currentState == STATE_AIMING) ? (millis() - aim_start_time) : aim_duration_ms,
-      (current_v > detect_threshold) ? current_x : 0.0f,
-      (current_v > detect_threshold) ? current_y : 0.0f,
-      (current_v > detect_threshold) ? current_v : 0,
+      (current_v > 0) ? current_x : 0.0f,
+      (current_v > 0) ? current_y : 0.0f,
+      (current_v > 0) ? current_v : 0,
       (has_shot ? 1 : 0), (camera_ok ? 1 : 0), focus_value
     );
     pStatusChar->setValue((uint8_t*)json, strlen(json));
@@ -351,7 +424,7 @@ void loop() {
 
   if (currentState == STATE_AIMING) {
     if (shotDetected) {
-      if (current_v > detect_threshold || (millis() - last_laser_seen_time < 250)) {
+      if (current_v > 0 || (millis() - last_laser_seen_time < 250)) {
         shot_x = current_x;
         shot_y = current_y;
         
@@ -384,74 +457,48 @@ void loop() {
 
   camera_fb_t * fb = esp_camera_fb_get();
   if (fb) {
-    if (currentState == STATE_FOCUSING) {
-      // Calcular la nitidez (Laplaciano simplificado) de toda la imagen
-      long sharpness = 0;
+      // Detección de diana pasiva (bloque oscuro)
+      int min_val = 255;
+      int min_x = 0;
+      int min_y = 0;
       
-      // Muestrear toda la imagen pero saltando pixeles para hacerlo muy rápido
-      // ya que el ESP32 tiene que mantener los FPS altos.
-      for (int y = 1; y < fb->height; y += 2) {
-        for (int x = 1; x < fb->width; x += 2) {
-          int idx = y * fb->width + x;
-          int val = fb->buf[idx];
-          
-          int prev_x = fb->buf[idx - 1];
-          int prev_y = fb->buf[idx - fb->width];
-          
-          int diff_x = val - prev_x;
-          int diff_y = val - prev_y;
-          
-          // Ignorar ruido muy bajo, pero aceptar gradientes suaves
-          if (abs(diff_x) > 2) sharpness += abs(diff_x);
-          if (abs(diff_y) > 2) sharpness += abs(diff_y);
-        }
-      }
-      
-      long raw_focus = sharpness / 10;
-      
-      // Suavizado exponencial (Filtro pasa bajos) para evitar temblores
-      static float smoothed_focus = -1.0f;
-      if (smoothed_focus < 0) smoothed_focus = raw_focus; // inicializar
-      smoothed_focus = (smoothed_focus * 0.85f) + (raw_focus * 0.15f);
-      
-      focus_value = (int)smoothed_focus;
-
-    } else {
-      // Detección normal de láser
-      int max_val = 0;
-      int max_x = 0;
-      int max_y = 0;
-      for (int y = 0; y < fb->height; y++) {
-        for (int x = 0; x < fb->width; x++) {
+      // Muestreo rápido para encontrar el área más oscura (saltando bordes para evitar sombras de viñeteo)
+      for (int y = 5; y < fb->height - 5; y++) {
+        for (int x = 5; x < fb->width - 5; x++) {
           int idx = y * fb->width + x;
           uint8_t val = fb->buf[idx];
-          if (val > max_val) {
-            max_val = val;
-            max_x = x;
-            max_y = y;
+          if (val < min_val) {
+            min_val = val;
+            min_x = x;
+            min_y = y;
           }
         }
       }
 
-      if (max_val > detect_threshold) {
+      // El umbral dinámico será un poco más claro que el punto más oscuro para coger toda la mancha
+      int dark_tolerance = min_val + 30; 
+      
+      // Validamos que la zona sea lo suficientemente oscura según el detect_threshold enviado desde la app
+      // Usamos solo min_val para que sea más fácil de calibrar con el slider de la app
+      if (min_val <= detect_threshold) {
         long sum_x = 0;
         long sum_y = 0;
         int count = 0;
-        int threshold = max_val - 20; 
-        if (threshold < detect_threshold) threshold = detect_threshold;
-
-        // Búsqueda en una ventana local de +/- 7 píxeles alrededor de la coordenada máxima
-        int radius = 7;
-        int start_x = (max_x - radius > 0) ? (max_x - radius) : 0;
-        int end_x = (max_x + radius < fb->width - 1) ? (max_x + radius) : (fb->width - 1);
-        int start_y = (max_y - radius > 0) ? (max_y - radius) : 0;
-        int end_y = (max_y + radius < fb->height - 1) ? (max_y + radius) : (fb->height - 1);
+        
+        // Búsqueda en una ventana local muy amplia (+/- 80 píxeles) para asegurar que cogemos TODA la diana negra
+        // Si la ventana es muy pequeña y la diana se ve muy grande, el cálculo se queda atascado en el centro.
+        int radius = 80;
+        int start_x = (min_x - radius > 0) ? (min_x - radius) : 0;
+        int end_x = (min_x + radius < fb->width - 1) ? (min_x + radius) : (fb->width - 1);
+        int start_y = (min_y - radius > 0) ? (min_y - radius) : 0;
+        int end_y = (min_y + radius < fb->height - 1) ? (min_y + radius) : (fb->height - 1);
 
         for (int y = start_y; y <= end_y; y++) {
           for (int x = start_x; x <= end_x; x++) {
             int idx = y * fb->width + x;
             uint8_t val = fb->buf[idx];
-            if (val >= threshold) {
+            // Si el píxel es negro (o muy oscuro), lo sumamos al centro de masa
+            if (val <= dark_tolerance) {
               sum_x += x;
               sum_y += y;
               count++;
@@ -459,11 +506,27 @@ void loop() {
           }
         }
 
-        if (count > 0) {
-          current_x = (float)sum_x / count;
-          current_y = (float)sum_y / count;
-          current_v = max_val;
+        // Filtramos para asegurar que no sea solo un pixel muerto, sino una mancha real
+        if (count > 10) {
+          // INVERSIÓN DE EJES (320 - x, 240 - y):
+          // Al mover la pistola a la derecha, la cámara ve que la diana se mueve a la izquierda.
+          // Invertimos los ejes aquí para que la App de Android lo dibuje correctamente.
+          float raw_x = 320.0f - ((float)sum_x / count);
+          float raw_y = 240.0f - ((float)sum_y / count);
+          
+          // Suavizado (Media móvil exponencial) para mitigar el Rolling Shutter
+          if (current_v == 0) { 
+            current_x = raw_x;
+            current_y = raw_y;
+          } else {
+            current_x = (current_x * 0.6f) + (raw_x * 0.4f);
+            current_y = (current_y * 0.6f) + (raw_y * 0.4f);
+          }
+          
+          current_v = 255 - min_val; // Invertimos para que la app vea un valor alto cuando es correcto
           last_laser_seen_time = millis();
+        } else {
+           current_v = 0;
         }
       } else {
         current_v = 0;
@@ -472,20 +535,19 @@ void loop() {
       // Print debug info to Serial Monitor every 1 second
       if (millis() - last_debug_print > 1000) {
         if (current_v > 0) {
-          Serial.print("LASER DETECTADO -> Intensidad: ");
+          Serial.print("DIANA DETECTADA -> Oscuridad: ");
           Serial.print(current_v);
           Serial.print(" | Pos X: ");
           Serial.print(current_x);
           Serial.print(" | Pos Y: ");
           Serial.println(current_y);
         } else {
-          Serial.print("LASER NO DETECTADO -> Intensidad Max: ");
-          Serial.println(max_val);
+          Serial.print("BUSCANDO DIANA -> Pto mas oscuro: ");
+          Serial.println(min_val);
         }
         last_debug_print = millis();
       }
-    }
-    
+      
     esp_camera_fb_return(fb);
   }
 }

@@ -20,7 +20,7 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import com.splatt.elite.ui.theme.AccentColor
 
-data class ShotPoint(val x: Float, val y: Float, val label: String)
+data class ShotPoint(val x: Float, val y: Float, val label: String, val timeMs: Long = 0L, val hold10: Float = 0f, val hold9: Float = 0f)
 data class TracePoint(val x: Float, val y: Float, val color: Color, val timeMs: Long = 0L)
 
 @Composable
@@ -28,9 +28,9 @@ fun TargetView(
     modifier: Modifier = Modifier,
     isLightMode: Boolean = false,
     zoomFactor: Float = 1.0f,
-    currentLaserX: Float = 0.0f,
-    currentLaserY: Float = 0.0f,
-    isLaserVisible: Boolean = false,
+    currentTargetX: Float = 0.0f,
+    currentTargetY: Float = 0.0f,
+    isTargetVisible: Boolean = false,
     calibX: Float = 0.0f,
     calibY: Float = 0.0f,
     distanceM: Float = 10.0f,
@@ -39,10 +39,10 @@ fun TargetView(
     trace: List<TracePoint> = emptyList(),
     calibShots: List<Offset> = emptyList()
 ) {
-    val bgColor = if (isLightMode) Color(0xFFFDF5E6) else Color(0xFF1E1E1E)
-    val paperColor = Color(0xFFF0E5D8)
-    val targetBlackColor = Color(0xFF111111)
-    val lineAccent = if (isLightMode) Color(0xFF333333) else Color(0xFFCCCCCC)
+    val bgColor = Color(0xFF1E1E1E) // Siempre oscuro
+    val paperColor = if (isLightMode) Color(0xFFF0E5D8) else Color(0xFF111111)
+    val targetBlackColor = if (isLightMode) Color(0xFF111111) else Color(0xFFF0E5D8)
+    val lineAccent = Color(0xFFCCCCCC) // Siempre oscuro
 
     Box(
         modifier = modifier
@@ -64,7 +64,8 @@ fun TargetView(
 
             // Function to map ESP32 coordinates (0-320, 0-240) to millimeter offset from center
             fun toMm(rx: Float, ry: Float): Offset {
-                val pEff = 0.011f
+                // pEff ajustado de 0.011 a 0.013 para compensar que los tiros se iban muy al centro
+                val pEff = 0.013f
                 val focalLengthPx = lensMm / pEff
                 val scaleFactor = (distanceM * 1000.0f) / focalLengthPx
                 
@@ -103,7 +104,11 @@ fun TargetView(
             for (i in issfD.indices) {
                 val d = issfD[i]
                 val rPx = (d / 2.0f) * mmToPx * zoomFactor
-                val strokeColor = if (d <= 59.5f) Color(0x99FFFFFF) else Color(0x66000000)
+                val strokeColor = if (isLightMode) {
+                    if (d <= 59.5f) Color(0x99FFFFFF) else Color(0x66000000)
+                } else {
+                    if (d <= 59.5f) Color(0x66000000) else Color(0x99FFFFFF)
+                }
 
                 drawCircle(
                     color = strokeColor,
@@ -118,7 +123,12 @@ fun TargetView(
                 if (d > 11.5f) { // d > 11.5f excludes the 10 ring. Includes 155.5f (ring 1)
                     val labelOffsetMm = (d / 2.0f) - 4.0f
                     val paint = Paint().asFrameworkPaint().apply {
-                        color = (if (d <= 59.5f) Color.White else Color.DarkGray).toArgb()
+                        val textColorArgb = if (isLightMode) {
+                            if (d <= 59.5f) Color.White else Color.DarkGray
+                        } else {
+                            if (d <= 59.5f) Color.DarkGray else Color.White
+                        }
+                        color = textColorArgb.toArgb()
                         textSize = (4.0f * mmToPx * zoomFactor).coerceIn(12f, 40f)
                         textAlign = android.graphics.Paint.Align.CENTER
                         isAntiAlias = true
@@ -148,7 +158,7 @@ fun TargetView(
 
             // Draw Inner Ten Center Dot
             drawCircle(
-                color = Color(0x66FFFFFF),
+                color = if (isLightMode) Color(0x66FFFFFF) else Color(0x66000000),
                 radius = (5.0f / 2.0f) * mmToPx * zoomFactor,
                 center = Offset(centerX, centerY),
                 style = Stroke(width = 1.0f)
@@ -219,10 +229,10 @@ fun TargetView(
                 )
             }
 
-            // --- DRAW LIVE LASER (AIMING) POINT ---
-            if (isLaserVisible) {
-                val laserPosMm = toMm(currentLaserX, currentLaserY)
-                val canvasPos = toCanvasCoordinates(laserPosMm)
+            // --- DRAW LIVE TARGET (AIMING) POINT ---
+            if (isTargetVisible) {
+                val targetPosMm = toMm(currentTargetX, currentTargetY)
+                val canvasPos = toCanvasCoordinates(targetPosMm)
                 
                 // Draw yellow/orange crosshair or glowing dot
                 drawCircle(

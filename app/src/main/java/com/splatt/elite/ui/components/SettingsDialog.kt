@@ -20,29 +20,22 @@ import com.splatt.elite.ui.theme.AccentColor
 fun SettingsDialog(
     status: SplattStatus,
     currentDistance: Float,
-    currentLens: Float,
     currentSensitivity: Int,
     currentSound: Int,
-    currentMaxSound: Int,
     currentExposure: Int,
-    currentGain: Int,
     onDismiss: () -> Unit,
-    onSaveSettings: (exposure: Int, gain: Int, distance: Float, lens: Float, sensitivity: Int, sound: Int, maxSound: Int) -> Unit,
-    onAdjustFocus: () -> Unit
+    onSaveSettings: (exposure: Int, distance: Float, sensitivity: Int, sound: Int) -> Unit
 ) {
     var exposure by remember { mutableStateOf(currentExposure.coerceIn(10, 1200)) }
-    var gain by remember { mutableStateOf(currentGain.coerceIn(0, 30)) }
     var distance by remember { mutableFloatStateOf(currentDistance) }
-    var lens by remember { mutableFloatStateOf(currentLens) }
     var sensitivity by remember { mutableIntStateOf(currentSensitivity) }
     var soundSensitivity by remember { mutableIntStateOf(currentSound) }
-    var maxSoundSensitivity by remember { mutableIntStateOf(currentMaxSound) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
             Text(
-                text = "Ajustes de Láser IR",
+                text = "Ajustes de Visión",
                 style = MaterialTheme.typography.titleLarge,
                 color = AccentColor
             )
@@ -55,9 +48,9 @@ fun SettingsDialog(
                     .padding(vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                // Laser sensitivity level
+                // Target sensitivity level
                 Column {
-                    Text("Sensibilidad Láser (Nivel: $sensitivity)", style = MaterialTheme.typography.bodyMedium)
+                    Text("Detección de Diana (Contraste: $sensitivity)", style = MaterialTheme.typography.bodyMedium)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
@@ -125,25 +118,7 @@ fun SettingsDialog(
                     )
                 }
 
-                // Gain Slider
-                Column {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text("Ganancia Sensibilidad", style = MaterialTheme.typography.bodyMedium)
-                        Text(gain.toString())
-                    }
-                    Slider(
-                        value = gain.toFloat(),
-                        onValueChange = { gain = it.toInt() },
-                        valueRange = 0f..30f,
-                        colors = SliderDefaults.colors(
-                            thumbColor = AccentColor,
-                            activeTrackColor = AccentColor
-                        )
-                    )
-                }
+                // Eliminado Gain Slider
 
                 // Distance Slider
                 Column {
@@ -166,26 +141,7 @@ fun SettingsDialog(
                     )
                 }
 
-                // Lens Slider
-                Column {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text("Lente de Cámara (mm)", style = MaterialTheme.typography.bodyMedium)
-                        Text(String.format("%.1f mm", lens))
-                    }
-                    Slider(
-                        value = lens,
-                        onValueChange = { lens = it },
-                        valueRange = 1f..50f,
-                        steps = 98,
-                        colors = SliderDefaults.colors(
-                            thumbColor = AccentColor,
-                            activeTrackColor = AccentColor
-                        )
-                    )
-                }
+                // Eliminado Lens Slider
 
                 // Sound Sensitivity
                 Column {
@@ -237,70 +193,13 @@ fun SettingsDialog(
                     }
                 }
 
-                // Max Sound Sensitivity
-                Column {
-                    Text("Rechazo de Ruido Fuerte (Nivel: $maxSoundSensitivity)", style = MaterialTheme.typography.bodyMedium)
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        (1..5).forEach { num ->
-                            Box(
-                                modifier = Modifier
-                                    .size(36.dp)
-                                    .background(
-                                        if (maxSoundSensitivity == num) AccentColor else Color.DarkGray,
-                                        shape = RoundedCornerShape(4.dp)
-                                    )
-                                    .clickable { maxSoundSensitivity = num },
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    num.toString(),
-                                    color = if (maxSoundSensitivity == num) Color.Black else Color.White
-                                )
-                            }
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        (6..10).forEach { num ->
-                            Box(
-                                modifier = Modifier
-                                    .size(36.dp)
-                                    .background(
-                                        if (maxSoundSensitivity == num) AccentColor else Color.DarkGray,
-                                        shape = RoundedCornerShape(4.dp)
-                                    )
-                                    .clickable { maxSoundSensitivity = num },
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    num.toString(),
-                                    color = if (maxSoundSensitivity == num) Color.Black else Color.White
-                                )
-                            }
-                        }
-                    }
-                    Text("10 = Sin límite de ruido. Valores menores ignoran golpes fuertes.", color = Color.Gray, fontSize = 10.sp)
-                }
-
-                Button(
-                    onClick = onAdjustFocus,
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2ECC71)),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("🔍 Ajustar Enfoque (Lente)", color = Color.White)
-                }
+                // Eliminado botón de Ajustar Enfoque
             }
         },
         confirmButton = {
             TextButton(
                 onClick = {
-                    onSaveSettings(exposure, gain, distance, lens, sensitivity, soundSensitivity, maxSoundSensitivity)
+                    onSaveSettings(exposure, distance, sensitivity, soundSensitivity)
                     onDismiss()
                 }
             ) {

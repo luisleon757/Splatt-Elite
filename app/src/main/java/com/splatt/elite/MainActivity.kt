@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.speech.tts.TextToSpeech
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -31,6 +32,7 @@ import com.splatt.elite.network.SplattStatus
 import com.splatt.elite.ui.components.CalibrationDPad
 import com.splatt.elite.ui.components.FocusDialog
 import com.splatt.elite.ui.components.SettingsDialog
+import com.splatt.elite.ui.components.StatsDialog
 import com.splatt.elite.ui.components.ShotPoint
 import com.splatt.elite.ui.components.TargetView
 import com.splatt.elite.ui.components.TracePoint
@@ -54,7 +56,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             var isLightMode by remember { mutableStateOf(false) }
-            SplattEliteTheme(darkTheme = !isLightMode) {
+            SplattEliteTheme(darkTheme = true) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
@@ -77,6 +79,30 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
     
     val prefs = context.getSharedPreferences("splatt_prefs", Context.MODE_PRIVATE)
     
+    // TTS Manager
+    var tts by remember { mutableStateOf<TextToSpeech?>(null) }
+    var isTtsReady by remember { mutableStateOf(false) }
+
+    DisposableEffect(context) {
+        var ttsInstance: TextToSpeech? = null
+        ttsInstance = TextToSpeech(context) { status ->
+            if (status == TextToSpeech.SUCCESS) {
+                val result = ttsInstance?.setLanguage(Locale("es", "ES"))
+                if (result != TextToSpeech.LANG_MISSING_DATA && result != TextToSpeech.LANG_NOT_SUPPORTED) {
+                    isTtsReady = true
+                } else {
+                    ttsInstance?.language = Locale.getDefault()
+                    isTtsReady = true
+                }
+            }
+        }
+        tts = ttsInstance
+        onDispose {
+            ttsInstance?.stop()
+            ttsInstance?.shutdown()
+        }
+    }
+    
     // BLE Manager
     val bleManager = remember { BleManager(context) }
     
@@ -89,12 +115,12 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
     var calibX by remember { mutableFloatStateOf(prefs.getFloat("calib_x", 0.0f)) }
     var calibY by remember { mutableFloatStateOf(prefs.getFloat("calib_y", 0.0f)) }
     var distM by remember { mutableFloatStateOf(prefs.getFloat("dist", 10.0f)) }
-    var lensMm by remember { mutableFloatStateOf(prefs.getFloat("lens", 25.0f)) }
     var currentSensitivity by remember { mutableIntStateOf(prefs.getInt("sensitivity", 9)) }
     var currentSound by remember { mutableIntStateOf(prefs.getInt("sound", 8)) }
     var currentExposure by remember { mutableIntStateOf(prefs.getInt("exposure", 300)) }
-    var currentGain by remember { mutableIntStateOf(prefs.getInt("gain", 0)) }
-    var maxSound by remember { mutableIntStateOf(prefs.getInt("max_sound", 10)) }
+
+    // Valores físicos fijos (ya no son configurables por UI)
+    val lensMm = 25.0f
     
     var localScore by remember { mutableFloatStateOf(0.0f) }
     var isCalibrating by remember { mutableStateOf(false) }
@@ -107,7 +133,7 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
     
     // Dialog control
     var showSettings by remember { mutableStateOf(false) }
-    var showFocus by remember { mutableStateOf(false) }
+    var showStats by remember { mutableStateOf(false) }
 
     // Permissions logic
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -156,23 +182,47 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
             val cy = finalShotY - 120.0f - calibY
             val distPixels = kotlin.math.sqrt((cx * cx) + (cy * cy))
             
-            val pEff = 0.011f
+            val pEff = 0.013f // Modificado de 0.011 a 0.013 para que los disparos se abran un poco más
             val focalLengthPx = lensMm / pEff
             val scaleFactor = (distM * 1000.0f) / focalLengthPx
             
             val calculatedScore = 11.0f - ((distPixels * scaleFactor) / 8.0f)
             localScore = calculatedScore.coerceIn(0.0f, 10.9f)
             
-            shots.add(ShotPoint(finalShotX, finalShotY, String.format(Locale.US, "%.1f", localScore)))
+            val shotTime = status.time
+            val holdTimeWindowMs = 1000L
+            val lastSecTrace = trace.filter { shotTime - it.timeMs <= holdTimeWindowMs }
+            var inside10 = 0
+            var inside9 = 0
+            lastSecTrace.forEach { pt ->
+                val cxPt = pt.x - 160.0f - calibX
+                val cyPt = pt.y - 120.0f - calibY
+                val distPtMm = kotlin.math.sqrt((cxPt * cxPt) + (cyPt * cyPt)) * scaleFactor
+                if (distPtMm <= 8.0f) inside10++
+                if (distPtMm <= 16.0f) inside9++
+            }
+            val hold10Pct = if (lastSecTrace.isNotEmpty()) (inside10.toFloat() / lastSecTrace.size) * 100f else 0f
+            val hold9Pct = if (lastSecTrace.isNotEmpty()) (inside9.toFloat() / lastSecTrace.size) * 100f else 0f
+            
+            shots.add(ShotPoint(finalShotX, finalShotY, String.format(Locale.US, "%.1f", localScore), shotTime, hold10Pct, hold9Pct))
+            
+            // TTS Speak
+            if (isTtsReady) {
+                val scoreInt = localScore.toInt()
+                val scoreDec = ((localScore * 10).toInt()) % 10
+                val holdInt = hold10Pct.toInt()
+                
+                val speechText = "$scoreInt con $scoreDec... parada $holdInt por ciento"
+                tts?.speak(speechText, TextToSpeech.QUEUE_FLUSH, null, null)
+            }
             
             if (!isCalibrating) {
-                val shotTime = status.time
                 val repaintedTrace = trace.map { pt ->
                     val timeBeforeShot = shotTime - pt.timeMs
                     val newColor = when {
-                        timeBeforeShot <= 1000 -> Color.Green
-                        timeBeforeShot <= 2000 -> Color(0xFFE67E22) // Naranja / Orange
-                        else -> Color(0xFF1B4F72) // Azul oscuro / Dark Blue
+                        timeBeforeShot <= 200 -> Color(0xFF3498DB) // Azul hasta el disparo
+                        timeBeforeShot <= 1000 -> Color(0xFFF1C40F) // Amarillo hasta 0.2s
+                        else -> Color.Green // Verde resto del tiempo
                     }
                     pt.copy(color = newColor)
                 }
@@ -191,7 +241,7 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                 val traceColor = when {
                     isCalibrating -> Color.Green
                     status.state == 2 -> Color.Red // post-disparo
-                    else -> Color(0xFF1B4F72) // Azul oscuro / Dark Blue
+                    else -> Color.Green // Verde durante la fase de apuntado
                 }
                 
                 trace.add(TracePoint(status.x, status.y, traceColor, status.time))
@@ -229,9 +279,9 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
             val file = File(context.cacheDir, filename)
             val writer = FileWriter(file)
             
-            writer.append("Numero,X_Raw,Y_Raw,Puntuacion\n")
+            writer.append("Numero,X_Raw,Y_Raw,Puntuacion,Tiempo_Apuntado_ms,Parada_10_Pct,Parada_9_Pct\n")
             shots.forEachIndexed { index, shot ->
-                writer.append("${index + 1},${shot.x},${shot.y},${shot.label}\n")
+                writer.append("${index + 1},${shot.x},${shot.y},${shot.label},${shot.timeMs},${String.format(Locale.US, "%.1f", shot.hold10)},${String.format(Locale.US, "%.1f", shot.hold9)}\n")
             }
             writer.flush()
             writer.close()
@@ -314,7 +364,7 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                         contentPadding = PaddingValues(horizontal = 8.dp),
                         modifier = Modifier.height(36.dp)
                     ) {
-                        Text(if (isLightMode) "Tema Oscuro" else "Tema Claro", fontSize = 12.sp)
+                        Text(if (isLightMode) "Diana Invertida" else "Diana Normal", fontSize = 12.sp)
                     }
 
                     Button(
@@ -361,13 +411,24 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
 
                 // Center: Score
                 Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.TopCenter) {
-                    Text(
-                        text = if (localScore > 0) String.format(Locale.US, "%.1f", localScore) else "0.0",
-                        fontSize = 64.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = GreenActive,
-                        modifier = Modifier.offset(y = (-8).dp) // Move it slightly up as requested
-                    )
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = if (localScore > 0) String.format(Locale.US, "%.1f", localScore) else "0.0",
+                            fontSize = 64.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = GreenActive,
+                            modifier = Modifier.offset(y = (-8).dp) // Move it slightly up as requested
+                        )
+                        if (shots.isNotEmpty()) {
+                            Text(
+                                text = String.format(Locale.US, "Parada: %.0f%%", shots.last().hold10),
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.offset(y = (-16).dp)
+                            )
+                        }
+                    }
                 }
 
                 // Right: Shots Count & Reset
@@ -415,9 +476,9 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                     modifier = Modifier.fillMaxSize(),
                     isLightMode = isLightMode,
                     zoomFactor = uiZoom,
-                    currentLaserX = status.x,
-                    currentLaserY = status.y,
-                    isLaserVisible = (status.v > 0),
+                    currentTargetX = status.x,
+                    currentTargetY = status.y,
+                    isTargetVisible = (status.v > 0),
                     calibX = calibX,
                     calibY = calibY,
                     distanceM = distM,
@@ -458,14 +519,19 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         if (status.state == 0) {
-                            Button(
-                                onClick = { bleManager.sendCommand("start_shot") },
-                                colors = ButtonDefaults.buttonColors(containerColor = AccentColor),
-                                modifier = Modifier.weight(1f).height(48.dp),
-                                enabled = isConnected,
-                                contentPadding = PaddingValues(0.dp)
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(48.dp)
+                                    .background(GlassBg, RoundedCornerShape(8.dp)),
+                                contentAlignment = Alignment.Center
                             ) {
-                                Text("🎯 TIRO", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                Text(
+                                    "Levanta el arma para apuntar",
+                                    color = Color.White,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
                             }
                         } else if (!isCalibrating) {
                             Button(
@@ -537,17 +603,28 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                             onClick = { showSettings = true },
                             modifier = Modifier.weight(1f),
                             colors = ButtonDefaults.buttonColors(containerColor = GlassBg, contentColor = Color.White),
-                            enabled = isConnected
+                            enabled = isConnected,
+                            contentPadding = PaddingValues(0.dp)
                         ) {
-                            Text("Ajustes")
+                            Text("⚙️ Ajustes", fontSize = 12.sp)
                         }
 
                         Button(
                             onClick = { exportToCsv() },
                             modifier = Modifier.weight(1f),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2ECC71), contentColor = Color.White)
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2ECC71), contentColor = Color.White),
+                            contentPadding = PaddingValues(0.dp)
                         ) {
-                            Text("📥 Exportar CSV")
+                            Text("📥 CSV", fontSize = 12.sp)
+                        }
+                        
+                        Button(
+                            onClick = { showStats = true },
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3498DB), contentColor = Color.White),
+                            contentPadding = PaddingValues(0.dp)
+                        ) {
+                            Text("📊 Stats", fontSize = 12.sp)
                         }
                     }
                 }
@@ -559,58 +636,46 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
             SettingsDialog(
                 status = status,
                 currentDistance = distM,
-                currentLens = lensMm,
                 currentSensitivity = currentSensitivity,
                 currentSound = currentSound,
-                currentMaxSound = maxSound,
                 currentExposure = currentExposure,
-                currentGain = currentGain,
                 onDismiss = { showSettings = false },
-                onSaveSettings = { exposure, gain, distance, lens, sensitivity, sound, maxSnd ->
+                onSaveSettings = { exposure, distance, sensitivity, sound ->
                     distM = distance
-                    lensMm = lens
                     currentSensitivity = sensitivity
                     currentSound = sound
-                    maxSound = maxSnd
                     currentExposure = exposure
-                    currentGain = gain
                     prefs.edit()
                         .putFloat("dist", distance)
-                        .putFloat("lens", lens)
                         .putInt("sensitivity", sensitivity)
                         .putInt("sound", sound)
-                        .putInt("max_sound", maxSnd)
                         .putInt("exposure", exposure)
-                        .putInt("gain", gain)
                         .apply()
                         
                     scope.launch {
                         bleManager.sendConfig("exp:$exposure")
                         delay(150)
-                        bleManager.sendConfig("gain:$gain")
+                        bleManager.sendConfig("gain:0") // Fixed gain
                         delay(150)
                         bleManager.sendConfig("thr:${(11 - sensitivity) * 5}")
                         delay(150)
                         bleManager.sendConfig("snd:${sound * 250}")
                         delay(150)
-                        bleManager.sendConfig("max_snd:${maxSnd * 250}")
+                        bleManager.sendConfig("max_snd:60000") // Fixed max sound (no limit)
                     }
 
                     Toast.makeText(context, "Ajustes enviados", Toast.LENGTH_SHORT).show()
-                },
-                onAdjustFocus = {
-                    showSettings = false
-                    showFocus = true
                 }
             )
         }
-
-        if (showFocus) {
-            FocusDialog(
-                focusValue = status.f,
-                onStartFocus = { bleManager.sendCommand("start_focus") },
-                onStopFocus = { bleManager.sendCommand("stop_focus") },
-                onDismiss = { showFocus = false }
+        if (showStats) {
+            StatsDialog(
+                shots = shots,
+                calibX = calibX,
+                calibY = calibY,
+                distM = distM,
+                lensMm = lensMm,
+                onDismiss = { showStats = false }
             )
         }
     }
