@@ -143,18 +143,27 @@ void imuTask(void *pvParameters) {
         // El eje Z apunta hacia ti (horizontal). La gravedad recae en X e Y.
         float pitch = atan2((float)az, sqrt((float)ax*ax + (float)ay*ay)) * 180.0 / PI;
         
+        // Calculamos la inclinación lateral (Roll) para detectar si se apoya en la mesa
+        float roll = atan2((float)ax, (float)ay) * 180.0 / PI;
+        if (roll > 90.0) roll -= 180.0;
+        if (roll < -90.0) roll += 180.0;
+        
         if (currentState == STATE_STANDBY) {
-          if (abs(pitch) < 20.0) { // Arma horizontal +/- 20 grados
+          if (abs(pitch) < 20.0 && abs(roll) < 60.0) { // Arma horizontal y sin ladear demasiado
             currentState = STATE_AIMING;
             shotDetected = false;
             aim_start_time = millis();
-            Serial.println("INCLINOMETRO: Arma levantada. Modo APUNTANDO.");
+            Serial.println("INCLINOMETRO: Arma levantada y recta. Modo APUNTANDO.");
           }
         } else if (currentState == STATE_AIMING) {
-          if (abs(pitch) > 30.0) { // Arma bajada o descansando
+          if (abs(pitch) > 30.0 || abs(roll) > 60.0) { // Arma bajada o ladeada (en la mesa)
             currentState = STATE_STANDBY;
             has_shot = false;
-            Serial.println("INCLINOMETRO: Arma bajada. Modo STANDBY.");
+            if (abs(roll) > 60.0) {
+              Serial.println("INCLINOMETRO: Arma ladeada. Modo STANDBY.");
+            } else {
+              Serial.println("INCLINOMETRO: Arma bajada. Modo STANDBY.");
+            }
           }
         }
       }
@@ -203,7 +212,8 @@ class MyCommandCallbacks: public BLECharacteristicCallbacks {
           has_shot = false;
         } else if (cmd == "start_calib") {
           isCalibratingServer = true;
-          currentState = STATE_AIMING;
+          // No forzamos currentState = STATE_AIMING aquí, 
+          // permitimos que el inclinómetro lo levante naturalmente.
           shotDetected = false;
           has_shot = false;
         } else if (cmd == "stop_calib") {

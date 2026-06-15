@@ -252,9 +252,8 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
             }
         }
 
-        if (status.state == 0) {
-            isCalibrating = false // reset if it went to standby
-        }
+        // Eliminado el reseteo automático de isCalibrating al entrar en standby
+        // para permitir que se inicie la calibración con el arma apoyada.
         
         lastState = status.state
         lastS = status.s
