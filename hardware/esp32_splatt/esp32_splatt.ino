@@ -76,7 +76,8 @@ unsigned long last_laser_seen_time = 0;
 enum SystemState {
   STATE_STANDBY,
   STATE_AIMING,
-  STATE_POST_SHOT
+  STATE_POST_SHOT,
+  STATE_AUTO_TUNE
 };
 volatile SystemState currentState = STATE_STANDBY;
 
@@ -212,13 +213,18 @@ class MyCommandCallbacks: public BLECharacteristicCallbacks {
           has_shot = false;
         } else if (cmd == "start_calib") {
           isCalibratingServer = true;
-          // No forzamos currentState = STATE_AIMING aquí, 
-          // permitimos que el inclinómetro lo levante naturalmente.
+          // Forzamos un Auto-Tune inicial. Al terminar, pasará a STANDBY y el inclinómetro
+          // lo pondrá en AIMING automáticamente si el arma sigue levantada.
+          currentState = STATE_AUTO_TUNE;
           shotDetected = false;
           has_shot = false;
         } else if (cmd == "stop_calib") {
           isCalibratingServer = false;
           currentState = STATE_STANDBY;
+          has_shot = false;
+        } else if (cmd == "auto_tune") {
+          currentState = STATE_AUTO_TUNE;
+          shotDetected = false;
           has_shot = false;
         } else if (cmd == "sleep") {
           esp_deep_sleep_start();
@@ -463,6 +469,71 @@ void loop() {
       has_shot = false;
       Serial.println("Volviendo a modo STANDBY.");
     }
+  }
+
+  if (currentState == STATE_AUTO_TUNE) {
+    static const int test_exps[] = {5, 15, 30, 60, 100, 200, 400, 600, 800};
+    static int tune_idx = -1;
+    static unsigned long last_tune_time = 0;
+    static int best_exposure = 300;
+    static int best_score = -1000;
+
+    if (tune_idx == -1) {
+      sensor_t * s = esp_camera_sensor_get();
+      if(s) s->set_aec_value(s, test_exps[0]);
+      tune_idx = 0;
+      best_score = -1000;
+      last_tune_time = millis();
+      return;
+    }
+
+    if (millis() - last_tune_time > 150) { // Esperar a que el sensor aplique la exposición
+      camera_fb_t * fb = esp_camera_fb_get();
+      if (fb) {
+        int min_val = 255;
+        int max_val = 0;
+        // Muestreo rápido de la imagen
+        for (int i = 0; i < fb->len; i += 13) { 
+          uint8_t val = fb->buf[i];
+          if (val < min_val) min_val = val;
+          if (val > max_val) max_val = val;
+        }
+        
+        int contrast = max_val - min_val;
+        // Puntuación: Queremos buen contraste, un max_val alto (blanco) y min_val oscuro pero no negro puro (0).
+        // Penalizamos fuertemente si min_val > 100 (muy claro) o max_val < 150 (muy oscuro).
+        int score = contrast;
+        if (min_val > 100) score -= 100;
+        if (max_val < 150) score -= 100;
+        if (min_val == 0) score -= 20; // Penalización leve por subexponer demasiado
+
+        if (score > best_score) {
+          best_score = score;
+          best_exposure = test_exps[tune_idx];
+        }
+
+        esp_camera_fb_return(fb);
+
+        tune_idx++;
+        if (tune_idx >= (sizeof(test_exps)/sizeof(test_exps[0]))) {
+          // Fin del Auto-Tune
+          cam_exposure = best_exposure;
+          sensor_t * s = esp_camera_sensor_get();
+          if(s) s->set_aec_value(s, cam_exposure);
+          Serial.print("Auto-Tune Finalizado. Exposicion optima: ");
+          Serial.println(cam_exposure);
+          
+          currentState = STATE_STANDBY;
+          tune_idx = -1;
+          best_score = -1000;
+        } else {
+          sensor_t * s = esp_camera_sensor_get();
+          if(s) s->set_aec_value(s, test_exps[tune_idx]);
+        }
+      }
+      last_tune_time = millis();
+    }
+    return; // Saltamos el procesamiento normal mientras estamos en Auto-Tune
   }
 
   camera_fb_t * fb = esp_camera_fb_get();

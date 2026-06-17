@@ -85,9 +85,9 @@ A continuación se detalla el funcionamiento de cada control, sus rangos de valo
 
 #### 1. Sensibilidad a la Diana (Oscuridad) (Nivel: 1 - 10)
 *   **¿Qué hace?**: Controla el umbral de detección (`detect_threshold` o `thr` en el firmware) para identificar el color negro de la diana.
-    *   *Fórmula interna:* Se envía el comando BLE `thr:${(11 - sensibilidad) * 5}`.
-    *   **Nivel 10 (Más sensible)**: Envía un umbral muy bajo (`thr:5`), detectando dianas menos oscuras o en condiciones de luz moderada.
-    *   **Nivel 1 (Menos sensible)**: Envía un umbral alto (`thr:50`), requiriendo que la diana sea de un negro muy intenso para ser detectada.
+    *   *Fórmula interna:* Se envía el comando BLE `thr:${sensibilidad * 20}`.
+    *   **Nivel 10 (Más sensible)**: Envía un umbral muy alto (`thr:200`), detectando dianas incluso si están muy iluminadas (gris claro) o en condiciones de luz intensa como galerías ISSF.
+    *   **Nivel 1 (Menos sensible)**: Envía un umbral bajo (`thr:20`), requiriendo que la diana sea de un negro muy intenso/puro para ser detectada.
 *   **Utilidad práctica**: 
     *   Si experimentas "saltos en la traza" debido a sombras muy oscuras en el fondo de la habitación o muebles oscuros, **reduce la sensibilidad** (p.ej., a nivel 3 o 4) para que la cámara solo siga a la diana negra.
     *   Si la traza se corta o desaparece al mover el arma porque la diana no resalta lo suficiente, **aumenta la sensibilidad** (p.ej., a nivel 8 o 9).
@@ -132,6 +132,6 @@ A continuación se detalla el funcionamiento de cada control, sus rangos de valo
 *   **Se registran disparos falsos al mover el arma:**
     *   *Solución:* Disminuye el valor de la "Sensibilidad de Impacto" para exigir un golpe más fuerte (el clic del disparador).
 *   **No se detecta la diana o la traza no se dibuja:**
-    *   *Solución:* Asegúrate de que la cámara apunta directamente a la diana y no está desenfocada. Si la diana no es lo suficientemente oscura en comparación con la pared, reduce el valor de "Sensibilidad a la Diana" o ajusta el tiempo de exposición (`cam_exposure`) para mejorar el contraste.
+    *   *Solución:* Asegúrate de que la cámara apunta directamente a la diana y no está desenfocada. Si estás en una galería muy iluminada (tipo ISSF), la diana negra puede reflejar mucha luz y parecer gris para la cámara. **Sube el valor de "Sensibilidad a la Diana" (nivel 8 a 10)** para que la cámara la detecte, o reduce el tiempo de exposición para oscurecer la imagen general.
 *   **La batería se agota muy rápido o carga lento:**
     *   *Solución:* Activa el modo de **Bajo Consumo / Sleep** desde la app al terminar de entrenar o durante la carga. Esto pone al chip ESP32 en Deep Sleep profundo, cortando casi por completo el consumo de corriente.

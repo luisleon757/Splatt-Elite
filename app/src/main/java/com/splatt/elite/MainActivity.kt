@@ -32,6 +32,7 @@ import com.splatt.elite.network.SplattStatus
 import com.splatt.elite.ui.components.CalibrationDPad
 import com.splatt.elite.ui.components.FocusDialog
 import com.splatt.elite.ui.components.SettingsDialog
+import com.splatt.elite.ui.components.SessionsDialog
 import com.splatt.elite.ui.components.StatsDialog
 import com.splatt.elite.ui.components.ShotPoint
 import com.splatt.elite.ui.components.TargetView
@@ -134,6 +135,8 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
     // Dialog control
     var showSettings by remember { mutableStateOf(false) }
     var showStats by remember { mutableStateOf(false) }
+    var showSessions by remember { mutableStateOf(false) }
+    var currentSessionFile by remember { mutableStateOf<File?>(null) }
 
     // Permissions logic
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -204,7 +207,27 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
             val hold10Pct = if (lastSecTrace.isNotEmpty()) (inside10.toFloat() / lastSecTrace.size) * 100f else 0f
             val hold9Pct = if (lastSecTrace.isNotEmpty()) (inside9.toFloat() / lastSecTrace.size) * 100f else 0f
             
-            shots.add(ShotPoint(finalShotX, finalShotY, String.format(Locale.US, "%.1f", localScore), shotTime, hold10Pct, hold9Pct))
+            val newShot = ShotPoint(finalShotX, finalShotY, String.format(Locale.US, "%.1f", localScore), shotTime, hold10Pct, hold9Pct)
+            shots.add(newShot)
+            
+            try {
+                val sessionsDir = java.io.File(context.filesDir, "sessions")
+                if (!sessionsDir.exists()) sessionsDir.mkdirs()
+                
+                if (currentSessionFile == null) {
+                    val timestamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date())
+                    currentSessionFile = java.io.File(sessionsDir, "Splatt_Session_$timestamp.csv")
+                    val writer = java.io.FileWriter(currentSessionFile!!, true)
+                    writer.append("Numero,X_Raw,Y_Raw,Puntuacion,Tiempo_Apuntado_ms,Parada_10_Pct,Parada_9_Pct\n")
+                    writer.close()
+                }
+                
+                val writer = java.io.FileWriter(currentSessionFile!!, true)
+                writer.append("${shots.size},${newShot.x},${newShot.y},${newShot.label},${newShot.timeMs},${String.format(java.util.Locale.US, "%.1f", newShot.hold10)},${String.format(java.util.Locale.US, "%.1f", newShot.hold9)}\n")
+                writer.close()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
             
             // TTS Speak
             if (isTtsReady) {
@@ -267,46 +290,9 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
         else -> "DESCONOCIDO"
     }
 
-    fun exportToCsv() {
-        if (shots.isEmpty()) {
-            Toast.makeText(context, "No hay disparos para exportar", Toast.LENGTH_SHORT).show()
-            return
-        }
-        try {
-            val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-            val filename = "Splatt_Session_$timestamp.csv"
-            val file = File(context.cacheDir, filename)
-            val writer = FileWriter(file)
-            
-            writer.append("Numero,X_Raw,Y_Raw,Puntuacion,Tiempo_Apuntado_ms,Parada_10_Pct,Parada_9_Pct\n")
-            shots.forEachIndexed { index, shot ->
-                writer.append("${index + 1},${shot.x},${shot.y},${shot.label},${shot.timeMs},${String.format(Locale.US, "%.1f", shot.hold10)},${String.format(Locale.US, "%.1f", shot.hold9)}\n")
-            }
-            writer.flush()
-            writer.close()
-            
-            val uri = FileProvider.getUriForFile(context, "${context.packageName}.provider", file)
-            val viewIntent = Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(uri, "text/csv")
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            }
-            try {
-                context.startActivity(viewIntent)
-            } catch (e: android.content.ActivityNotFoundException) {
-                val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                    type = "text/csv"
-                    putExtra(Intent.EXTRA_SUBJECT, "Sesión Splatt Elite")
-                    putExtra(Intent.EXTRA_STREAM, uri)
-                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                }
-                context.startActivity(Intent.createChooser(shareIntent, "Exportar Sesión"))
-            }
-            
-        } catch (e: Exception) {
-            Toast.makeText(context, "Error exportando CSV", Toast.LENGTH_SHORT).show()
-            e.printStackTrace()
-        }
-    }
+
+
+
 
     Box(modifier = Modifier.fillMaxSize().systemBarsPadding()) {
         Column(
@@ -347,12 +333,21 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                             fontSize = 14.sp
                         )
                     }
-                    Text(
-                        text = "Modo: $stateText",
-                        color = AccentColor,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "Modo: $stateText",
+                            color = AccentColor,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = if (status.v > 0) "🎯 Diana: Detectada" else "🔍 Buscando diana...",
+                            color = if (status.v > 0) GreenActive else Color.Gray,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
 
                 // Header buttons
@@ -438,7 +433,7 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                 ) {
                     if (shots.isNotEmpty()) {
                         Button(
-                            onClick = { shots.clear(); trace.clear(); localScore = 0.0f },
+                            onClick = { shots.clear(); trace.clear(); localScore = 0.0f; currentSessionFile = null },
                             colors = ButtonDefaults.buttonColors(containerColor = RedActive),
                             contentPadding = PaddingValues(horizontal = 8.dp),
                             modifier = Modifier.height(36.dp).padding(end = 8.dp)
@@ -550,6 +545,7 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                                         isCalibrating = true
                                         calibShots.clear()
                                         bleManager.sendCommand("start_calib")
+                                        Toast.makeText(context, "Auto-Ajustando Visión... Mantén el arma firme", Toast.LENGTH_LONG).show()
                                     } else {
                                         isCalibrating = false
                                         if (calibShots.isNotEmpty()) {
@@ -609,7 +605,7 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                         }
 
                         Button(
-                            onClick = { exportToCsv() },
+                            onClick = { showSessions = true },
                             modifier = Modifier.weight(1f),
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2ECC71), contentColor = Color.White),
                             contentPadding = PaddingValues(0.dp)
@@ -656,7 +652,7 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                         delay(150)
                         bleManager.sendConfig("gain:0") // Fixed gain
                         delay(150)
-                        bleManager.sendConfig("thr:${(11 - sensitivity) * 5}")
+                        bleManager.sendConfig("thr:${sensitivity * 20}")
                         delay(150)
                         bleManager.sendConfig("snd:${sound * 250}")
                         delay(150)
@@ -675,6 +671,29 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                 distM = distM,
                 lensMm = lensMm,
                 onDismiss = { showStats = false }
+            )
+        }
+        if (showSessions) {
+            SessionsDialog(
+                onDismiss = { showSessions = false },
+                onOpen = { file ->
+                    try {
+                        val uri = FileProvider.getUriForFile(context, "${context.packageName}.provider", file)
+                        val viewIntent = Intent(Intent.ACTION_VIEW).apply {
+                            setDataAndType(uri, "text/csv")
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        }
+                        context.startActivity(viewIntent)
+                    } catch (e: Exception) {
+                        Toast.makeText(context, "No hay aplicación para abrir CSV", Toast.LENGTH_SHORT).show()
+                        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                            type = "text/csv"
+                            putExtra(Intent.EXTRA_STREAM, FileProvider.getUriForFile(context, "${context.packageName}.provider", file))
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        }
+                        context.startActivity(Intent.createChooser(shareIntent, "Abrir CSV con:"))
+                    }
+                }
             )
         }
     }

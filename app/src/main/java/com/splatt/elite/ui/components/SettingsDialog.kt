@@ -26,7 +26,7 @@ fun SettingsDialog(
     onDismiss: () -> Unit,
     onSaveSettings: (exposure: Int, distance: Float, sensitivity: Int, sound: Int) -> Unit
 ) {
-    var exposure by remember { mutableStateOf(currentExposure.coerceIn(10, 1200)) }
+    var exposure by remember { mutableStateOf(currentExposure.coerceIn(1, 1200)) }
     var distance by remember { mutableFloatStateOf(currentDistance) }
     var sensitivity by remember { mutableIntStateOf(currentSensitivity) }
     var soundSensitivity by remember { mutableIntStateOf(currentSound) }
@@ -110,7 +110,7 @@ fun SettingsDialog(
                     Slider(
                         value = exposure.toFloat(),
                         onValueChange = { exposure = it.toInt() },
-                        valueRange = 10f..1200f,
+                        valueRange = 1f..1200f,
                         colors = SliderDefaults.colors(
                             thumbColor = AccentColor,
                             activeTrackColor = AccentColor
