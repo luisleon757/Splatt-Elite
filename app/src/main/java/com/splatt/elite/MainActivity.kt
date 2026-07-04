@@ -14,6 +14,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -294,11 +296,12 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
 
 
 
-    Box(modifier = Modifier.fillMaxSize().systemBarsPadding()) {
+    BoxWithConstraints(modifier = Modifier.fillMaxSize().safeDrawingPadding()) {
+        val maxH = maxHeight
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(8.dp)
+                .padding(4.dp)
         ) {
             // --- TOP HEADER ---
             Row(
@@ -408,10 +411,10 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(
                             text = if (localScore > 0) String.format(Locale.US, "%.1f", localScore) else "0.0",
-                            fontSize = 64.sp,
+                            fontSize = 48.sp,
                             fontWeight = FontWeight.ExtraBold,
                             color = GreenActive,
-                            modifier = Modifier.offset(y = (-8).dp) // Move it slightly up as requested
+                            modifier = Modifier.offset(y = (-4).dp)
                         )
                         if (shots.isNotEmpty()) {
                             Text(
@@ -457,10 +460,10 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                 }
             }
 
-            // --- VIEWPORT / SHOOTING CANVAS ---
             Box(
                 modifier = Modifier
                     .weight(1f)
+                    .heightIn(max = maxH * 0.55f)
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(12.dp))
                     .border(1.dp, GlassBg, RoundedCornerShape(12.dp)),
@@ -489,6 +492,7 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .heightIn(max = maxH * 0.40f)
                     .background(PanelBg, RoundedCornerShape(12.dp))
                     .padding(8.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -531,7 +535,7 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                             Button(
                                 onClick = { bleManager.sendCommand("cancel_shot") },
                                 colors = ButtonDefaults.buttonColors(containerColor = RedActive),
-                                modifier = Modifier.weight(1f).height(48.dp),
+                                modifier = Modifier.weight(1f).height(42.dp),
                                 contentPadding = PaddingValues(0.dp)
                             ) {
                                 Text("❌ Cancelar", fontWeight = FontWeight.Bold, fontSize = 14.sp)
@@ -561,7 +565,7 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                                     }
                                 },
                                 colors = ButtonDefaults.buttonColors(containerColor = GlassBg, contentColor = Color.White),
-                                modifier = Modifier.weight(1f).height(48.dp),
+                                modifier = Modifier.weight(1f).height(42.dp),
                                 enabled = isConnected,
                                 contentPadding = PaddingValues(0.dp)
                             ) {

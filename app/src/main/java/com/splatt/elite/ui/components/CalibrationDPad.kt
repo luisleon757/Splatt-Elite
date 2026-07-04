@@ -29,7 +29,7 @@ fun CalibrationDPad(
 ) {
     Box(
         modifier = modifier
-            .size(150.dp)
+            .size(110.dp)
             .clip(CircleShape)
             .background(GlassBg),
         contentAlignment = Alignment.Center
@@ -37,7 +37,7 @@ fun CalibrationDPad(
         // Inner circle
         Box(
             modifier = Modifier
-                .size(45.dp)
+                .size(35.dp)
                 .clip(CircleShape)
                 .background(AccentColor.copy(alpha = 0.2f))
         )
@@ -53,7 +53,7 @@ fun CalibrationDPad(
                 imageVector = Icons.Default.KeyboardArrowUp,
                 contentDescription = "Up",
                 tint = Color.White,
-                modifier = Modifier.size(36.dp)
+                modifier = Modifier.size(28.dp)
             )
         }
 
@@ -68,7 +68,7 @@ fun CalibrationDPad(
                 imageVector = Icons.Default.KeyboardArrowDown,
                 contentDescription = "Down",
                 tint = Color.White,
-                modifier = Modifier.size(36.dp)
+                modifier = Modifier.size(28.dp)
             )
         }
 
@@ -83,7 +83,7 @@ fun CalibrationDPad(
                 imageVector = Icons.Default.KeyboardArrowLeft,
                 contentDescription = "Left",
                 tint = Color.White,
-                modifier = Modifier.size(36.dp)
+                modifier = Modifier.size(28.dp)
             )
         }
 
@@ -98,7 +98,7 @@ fun CalibrationDPad(
                 imageVector = Icons.Default.KeyboardArrowRight,
                 contentDescription = "Right",
                 tint = Color.White,
-                modifier = Modifier.size(36.dp)
+                modifier = Modifier.size(28.dp)
             )
         }
     }

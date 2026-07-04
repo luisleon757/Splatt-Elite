@@ -338,7 +338,13 @@ void setup() {
   config.jpeg_quality = 15;
 
   config.fb_count = 1;
-  config.fb_location = CAMERA_FB_IN_PSRAM;
+  if (psramFound()) {
+    config.fb_location = CAMERA_FB_IN_PSRAM;
+    Serial.println("PSRAM detectada: usando memoria externa");
+  } else {
+    config.fb_location = CAMERA_FB_IN_DRAM;
+    Serial.println("ATENCION: PSRAM no activada en Arduino IDE. Usando DRAM interna (QVGA Grayscale)");
+  }
   config.grab_mode = CAMERA_GRAB_LATEST;
 
   if(esp_camera_init(&config) != ESP_OK) {
