@@ -21,7 +21,12 @@ from splatt_imu import SplattIMU
 
 
 # BLE
-BLE_GATT_EXAMPLE = "/home/pi/bluez-examples/example-gatt-server"
+LOCAL_GATT_MODULE = Path(__file__).with_name("bluez_gatt_server.py")
+BLE_GATT_EXAMPLE = str(
+    LOCAL_GATT_MODULE
+    if LOCAL_GATT_MODULE.exists()
+    else Path("/home/pi/bluez-examples/example-gatt-server")
+)
 BLE_SERVICE_UUID = "12345678-1234-5678-1234-56789abcdef0"
 BLE_STATUS_UUID = "12345678-1234-5678-1234-56789abcdef1"
 BLE_COMMAND_UUID = "12345678-1234-5678-1234-56789abcdef2"

@@ -14,7 +14,7 @@ Sistema de entrenamiento de tiro formado por una Raspberry Pi con cámara, una a
 El software activo de la Raspberry está en:
 
 ```text
-visor_movimiento_ble_raspberry.py
+raspberry/visor_movimiento_ble.py
 ```
 
 La carpeta `hardware/esp32_*` contiene prototipos y firmware históricos. No representa la arquitectura activa del sistema.
@@ -36,7 +36,7 @@ La carpeta `hardware/esp32_*` contiene prototipos y firmware históricos. No rep
 ```text
 app/                                   Aplicación Android
 app/src/main/java/com/splatt/elite/    Código Kotlin y Jetpack Compose
-visor_movimiento_ble_raspberry.py      Software activo de Raspberry Pi
+raspberry/                             Software activo y módulos de Raspberry Pi
 hardware/                              Diseños, documentación y prototipos históricos
 manual_pruebas.md                      Guía de comprobaciones
 ```
@@ -77,7 +77,7 @@ La Raspberry ejecuta:
 Para actualizarlo desde Windows:
 
 ```powershell
-scp .\visor_movimiento_ble_raspberry.py pi@IP_DE_LA_RASPBERRY:/home/pi/visor_movimiento_ble.py
+scp .\raspberry\*.py pi@IP_DE_LA_RASPBERRY:/home/pi/
 ```
 
 ### Validar sintaxis
@@ -85,7 +85,7 @@ scp .\visor_movimiento_ble_raspberry.py pi@IP_DE_LA_RASPBERRY:/home/pi/visor_mov
 En la Raspberry:
 
 ```bash
-python3 -m py_compile /home/pi/visor_movimiento_ble.py
+python3 -m py_compile /home/pi/visor_movimiento_ble.py /home/pi/splatt_imu.py /home/pi/bluez_gatt_server.py
 ```
 
 ### Ejecutar
