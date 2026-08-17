@@ -174,10 +174,11 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
 
     // Shot logic (when status changes)
     var lastState by remember { mutableIntStateOf(0) }
-    var lastS by remember { mutableIntStateOf(0) }
     
     LaunchedEffect(status) {
-        if (isCalibrating && status.s == 1 && lastS == 0) {
+        // El protocolo BLE compacto marca cada impacto al entrar en estado 2.
+        // Usar la transición evita perderlo o contarlo más de una vez.
+        if (isCalibrating && status.state == 2 && lastState != 2) {
             calibShots.add(Offset(status.shotX, status.shotY))
             Toast.makeText(context, "Disparo de calibraciÃ³n registrado (${calibShots.size})", Toast.LENGTH_SHORT).show()
         }
@@ -287,7 +288,6 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
         // para permitir que se inicie la calibraciÃ³n con el arma apoyada.
         
         lastState = status.state
-        lastS = status.s
     }
 
     val stateText = when (status.state) {
