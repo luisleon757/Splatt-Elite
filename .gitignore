@@ -6,25 +6,21 @@
 
 # Files for the Art and Gradle
 .gradle/
+.kotlin/
 local.properties
 .navigation/
 
-# Android Studio local files
-.idea/workspace.xml
-.idea/tasks.xml
-.idea/gradle.xml
-.idea/assetWizardSettings.xml
-.idea/dictionaries
-.idea/libraries
-.idea/caches
-.idea/modules.xml
-.idea/compiler.xml
-.idea/misc.xml
+# Editor and Android Studio local files
+.idea/
+.vscode/
 *.iml
 .DS_Store
 
 # Log files
 *.log
+__pycache__/
+*.py[cod]
+*.bak
 
 # Secrets / local configuration
 local.properties

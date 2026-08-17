@@ -29,7 +29,7 @@ fun CalibrationDPad(
 ) {
     Box(
         modifier = modifier
-            .size(110.dp)
+            .size(180.dp)
             .clip(CircleShape)
             .background(GlassBg),
         contentAlignment = Alignment.Center
@@ -37,7 +37,7 @@ fun CalibrationDPad(
         // Inner circle
         Box(
             modifier = Modifier
-                .size(35.dp)
+                .size(52.dp)
                 .clip(CircleShape)
                 .background(AccentColor.copy(alpha = 0.2f))
         )
@@ -51,9 +51,9 @@ fun CalibrationDPad(
         ) {
             Icon(
                 imageVector = Icons.Default.KeyboardArrowUp,
-                contentDescription = "Up",
+                contentDescription = "Mover centro arriba",
                 tint = Color.White,
-                modifier = Modifier.size(28.dp)
+                modifier = Modifier.size(44.dp)
             )
         }
 
@@ -66,9 +66,9 @@ fun CalibrationDPad(
         ) {
             Icon(
                 imageVector = Icons.Default.KeyboardArrowDown,
-                contentDescription = "Down",
+                contentDescription = "Mover centro abajo",
                 tint = Color.White,
-                modifier = Modifier.size(28.dp)
+                modifier = Modifier.size(44.dp)
             )
         }
 
@@ -81,9 +81,9 @@ fun CalibrationDPad(
         ) {
             Icon(
                 imageVector = Icons.Default.KeyboardArrowLeft,
-                contentDescription = "Left",
+                contentDescription = "Mover centro a la izquierda",
                 tint = Color.White,
-                modifier = Modifier.size(28.dp)
+                modifier = Modifier.size(44.dp)
             )
         }
 
@@ -96,9 +96,9 @@ fun CalibrationDPad(
         ) {
             Icon(
                 imageVector = Icons.Default.KeyboardArrowRight,
-                contentDescription = "Right",
+                contentDescription = "Mover centro a la derecha",
                 tint = Color.White,
-                modifier = Modifier.size(28.dp)
+                modifier = Modifier.size(44.dp)
             )
         }
     }

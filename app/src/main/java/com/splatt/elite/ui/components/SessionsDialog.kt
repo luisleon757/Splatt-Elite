@@ -32,6 +32,7 @@ fun SessionsDialog(
     }
 
     var filesList by remember { mutableStateOf(sessionsDir.listFiles()?.sortedByDescending { it.lastModified() } ?: emptyList()) }
+    var filePendingDeletion by remember { mutableStateOf<File?>(null) }
 
     fun refreshFiles() {
         filesList = sessionsDir.listFiles()?.sortedByDescending { it.lastModified() } ?: emptyList()
@@ -89,10 +90,7 @@ fun SessionsDialog(
                                         Text("Abrir", fontSize = 12.sp)
                                     }
                                     Button(
-                                        onClick = {
-                                            file.delete()
-                                            refreshFiles()
-                                        },
+                                        onClick = { filePendingDeletion = file },
                                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE74C3C)),
                                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
                                         modifier = Modifier.height(32.dp)
@@ -114,5 +112,29 @@ fun SessionsDialog(
                 }
             }
         }
+    }
+
+    filePendingDeletion?.let { file ->
+        AlertDialog(
+            onDismissRequest = { filePendingDeletion = null },
+            title = { Text("Borrar sesión") },
+            text = { Text("¿Seguro que quieres borrar esta sesión? Esta acción no se puede deshacer.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        file.delete()
+                        filePendingDeletion = null
+                        refreshFiles()
+                    }
+                ) {
+                    Text("Borrar", color = Color(0xFFE74C3C))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { filePendingDeletion = null }) {
+                    Text("Cancelar")
+                }
+            }
+        )
     }
 }

@@ -3,10 +3,13 @@ package com.splatt.elite.network
 import android.annotation.SuppressLint
 import android.bluetooth.*
 import android.bluetooth.le.ScanCallback
+import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
+import android.bluetooth.le.ScanSettings
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import android.os.ParcelUuid
 import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -46,13 +49,10 @@ class BleManager(private val context: Context) {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
             super.onScanResult(callbackType, result)
             val device = result.device
-            // Use scanRecord?.deviceName which is parsed from the advertisement packet, 
-            // falling back to device.name which might be cached or null.
             val name = result.scanRecord?.deviceName ?: device.name ?: ""
-            if (name == "Splatt_Elite") {
-                stopScan()
-                connectToDevice(device)
-            }
+            Log.d("BleManager", "Scan: name='$name' address=${device.address}")
+            stopScan()
+            connectToDevice(device)
         }
     }
 
@@ -65,11 +65,23 @@ class BleManager(private val context: Context) {
         
         isScanning = true
         _isScanningState.value = true
-        scanner.startScan(scanCallback)
+        val filters = listOf(
+            ScanFilter.Builder()
+                .setServiceUuid(ParcelUuid(SERVICE_UUID))
+                .build()
+        )
+        val settings = ScanSettings.Builder()
+            .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+            .build()
+
+        scanner.startScan(filters, settings, scanCallback)
         
         // Stop scan after 10 seconds
         handler.postDelayed({
             stopScan()
+            if (!_connectionState.value) {
+                handler.postDelayed({ startScan() }, 1500)
+            }
         }, 10000)
     }
 
@@ -82,7 +94,12 @@ class BleManager(private val context: Context) {
     }
 
     private fun connectToDevice(device: BluetoothDevice) {
-        bluetoothGatt = device.connectGatt(context, false, gattCallback)
+        bluetoothGatt = device.connectGatt(
+            context,
+            false,
+            gattCallback,
+            BluetoothDevice.TRANSPORT_LE
+        )
     }
 
     fun disconnect() {
@@ -94,6 +111,7 @@ class BleManager(private val context: Context) {
 
     private val gattCallback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+            Log.d("BleManager", "Connection change: status=$status newState=$newState")
             if (newState == BluetoothProfile.STATE_CONNECTED) {
                 Log.d("BleManager", "Connected to GATT server.")
                 _connectionState.value = true
@@ -168,15 +186,54 @@ class BleManager(private val context: Context) {
         bluetoothGatt?.writeCharacteristic(char)
     }
 
-    private fun parseStatusJson(json: String): SplattStatus {
-        val clean = json.replace("{", "").replace("}", "").replace("\"", "")
-        val pairs = clean.split(",")
+    private fun parseStatusJson(payload: String): SplattStatus {
+        val text = payload.trim()
+
+        // Formato BLE compacto:
+        // estado,x,y,valida,tiempo
+        if (!text.startsWith("{")) {
+            val fields = text.split(",")
+
+            if (fields.size >= 4) {
+                val state = fields[0].toIntOrNull() ?: 0
+                val x = fields[1].toFloatOrNull() ?: 0.0f
+                val y = fields[2].toFloatOrNull() ?: 0.0f
+                val valid = fields[3].toIntOrNull() ?: 0
+                val time = fields.getOrNull(4)?.toLongOrNull() ?: 0L
+                val host = fields.getOrNull(5)?.trim().orEmpty()
+
+                return SplattStatus(
+                    state = state,
+                    shotX = x,
+                    shotY = y,
+                    time = time,
+                    x = x,
+                    y = y,
+                    v = valid,
+                    s = 0,
+                    c = 1,
+                    f = 0,
+                    host = host
+                )
+            }
+        }
+
+        val clean = text
+            .replace("{", "")
+            .replace("}", "")
+            .replace("\"", "")
+
         val map = mutableMapOf<String, String>()
-        for (pair in pairs) {
+
+        for (pair in clean.split(",")) {
             val parts = pair.split(":")
+
             if (parts.size >= 2) {
                 val key = parts[0].trim()
-                val value = parts.subList(1, parts.size).joinToString(":").trim()
+                val value = parts.subList(1, parts.size)
+                    .joinToString(":")
+                    .trim()
+
                 map[key] = value
             }
         }
@@ -191,7 +248,8 @@ class BleManager(private val context: Context) {
             v = map["v"]?.toIntOrNull() ?: 0,
             s = map["s"]?.toIntOrNull() ?: 0,
             c = map["c"]?.toIntOrNull() ?: 0,
-            f = map["f"]?.toIntOrNull() ?: 0
+            f = map["f"]?.toIntOrNull() ?: 0,
+            host = map["host"] ?: ""
         )
     }
 }

@@ -100,7 +100,7 @@ fun StatsDialog(
                     StatRow("Puntuación Media", String.format(Locale.US, "%.1f", avgScore))
                     StatRow("Mejor Disparo", String.format(Locale.US, "%.1f", bestScore))
                     StatRow("Porcentaje de 10s", String.format(Locale.US, "%.1f %%", pct10s))
-                    StatRow("Parada Media (10)", String.format(Locale.US, "%.1f %%", avgHold10))
+                    StatRow("Estabilidad media en el 10", String.format(Locale.US, "%.1f %%", avgHold10))
                     StatRow("Diámetro Agrupación", String.format(Locale.US, "%.1f mm", maxDist))
                     
                     // Formato del centroide

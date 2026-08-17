@@ -2,7 +2,6 @@ package com.splatt.elite
 
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
 import android.os.Bundle
 import android.speech.tts.TextToSpeech
 import android.widget.Toast
@@ -32,13 +31,13 @@ import androidx.core.content.FileProvider
 import com.splatt.elite.network.BleManager
 import com.splatt.elite.network.SplattStatus
 import com.splatt.elite.ui.components.CalibrationDPad
-import com.splatt.elite.ui.components.FocusDialog
 import com.splatt.elite.ui.components.SettingsDialog
 import com.splatt.elite.ui.components.SessionsDialog
 import com.splatt.elite.ui.components.StatsDialog
 import com.splatt.elite.ui.components.ShotPoint
 import com.splatt.elite.ui.components.TargetView
 import com.splatt.elite.ui.components.TracePoint
+import com.splatt.elite.ui.components.WifiCalibrationDialog
 import com.splatt.elite.ui.theme.AccentColor
 import com.splatt.elite.ui.theme.DarkBg
 import com.splatt.elite.ui.theme.GlassBg
@@ -46,8 +45,6 @@ import com.splatt.elite.ui.theme.GreenActive
 import com.splatt.elite.ui.theme.PanelBg
 import com.splatt.elite.ui.theme.RedActive
 import com.splatt.elite.ui.theme.SplattEliteTheme
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import java.io.File
 import java.io.FileWriter
 import java.text.SimpleDateFormat
@@ -78,8 +75,6 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    
     val prefs = context.getSharedPreferences("splatt_prefs", Context.MODE_PRIVATE)
     
     // TTS Manager
@@ -118,11 +113,7 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
     var calibX by remember { mutableFloatStateOf(prefs.getFloat("calib_x", 0.0f)) }
     var calibY by remember { mutableFloatStateOf(prefs.getFloat("calib_y", 0.0f)) }
     var distM by remember { mutableFloatStateOf(prefs.getFloat("dist", 10.0f)) }
-    var currentSensitivity by remember { mutableIntStateOf(prefs.getInt("sensitivity", 9)) }
-    var currentSound by remember { mutableIntStateOf(prefs.getInt("sound", 8)) }
-    var currentExposure by remember { mutableIntStateOf(prefs.getInt("exposure", 300)) }
-
-    // Valores físicos fijos (ya no son configurables por UI)
+    // Valores fÃ­sicos fijos (ya no son configurables por UI)
     val lensMm = 25.0f
     
     var localScore by remember { mutableFloatStateOf(0.0f) }
@@ -138,7 +129,22 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
     var showSettings by remember { mutableStateOf(false) }
     var showStats by remember { mutableStateOf(false) }
     var showSessions by remember { mutableStateOf(false) }
+    var showWifiCalibration by remember { mutableStateOf(false) }
+    var raspberryHost by remember {
+        mutableStateOf(
+            prefs.getString("raspberry_host", "192.168.31.195")
+                ?: "192.168.31.195"
+        )
+    }
     var currentSessionFile by remember { mutableStateOf<File?>(null) }
+
+    LaunchedEffect(status.host) {
+        val detectedHost = status.host.trim()
+        if (detectedHost.isNotEmpty() && detectedHost != raspberryHost) {
+            raspberryHost = detectedHost
+            prefs.edit().putString("raspberry_host", detectedHost).apply()
+        }
+    }
 
     // Permissions logic
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -148,7 +154,7 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
         if (allGranted) {
             bleManager.startScan()
         } else {
-            Toast.makeText(context, "Se requieren permisos para buscar la cámara", Toast.LENGTH_LONG).show()
+            Toast.makeText(context, "Se requieren permisos para buscar la cÃ¡mara", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -173,7 +179,7 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
     LaunchedEffect(status) {
         if (isCalibrating && status.s == 1 && lastS == 0) {
             calibShots.add(Offset(status.shotX, status.shotY))
-            Toast.makeText(context, "Disparo de calibración registrado (${calibShots.size})", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "Disparo de calibraciÃ³n registrado (${calibShots.size})", Toast.LENGTH_SHORT).show()
         }
         
         if (status.state == 2 && lastState != 2) {
@@ -187,7 +193,7 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
             val cy = finalShotY - 120.0f - calibY
             val distPixels = kotlin.math.sqrt((cx * cx) + (cy * cy))
             
-            val pEff = 0.013f // Modificado de 0.011 a 0.013 para que los disparos se abran un poco más
+            val pEff = 0.013f // Modificado de 0.011 a 0.013 para que los disparos se abran un poco mÃ¡s
             val focalLengthPx = lensMm / pEff
             val scaleFactor = (distM * 1000.0f) / focalLengthPx
             
@@ -270,26 +276,26 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                 }
                 
                 trace.add(TracePoint(status.x, status.y, traceColor, status.time))
-                // Se incrementa el límite a 5000 para no borrar la traza entera
+                // Se incrementa el lÃ­mite a 5000 para no borrar la traza entera
                 if (trace.size > 5000) {
                     trace.removeAt(0)
                 }
             }
         }
 
-        // Eliminado el reseteo automático de isCalibrating al entrar en standby
-        // para permitir que se inicie la calibración con el arma apoyada.
+        // Eliminado el reseteo automÃ¡tico de isCalibrating al entrar en standby
+        // para permitir que se inicie la calibraciÃ³n con el arma apoyada.
         
         lastState = status.state
         lastS = status.s
     }
 
     val stateText = when (status.state) {
-        0 -> "STANDBY"
-        1 -> "APUNTANDO"
-        2 -> "POST-DISPARO"
-        3 -> "ENFOQUE"
-        else -> "DESCONOCIDO"
+        0 -> "Listo"
+        1 -> "Apuntando"
+        2 -> "Resultado"
+        3 -> "Ajustando visión"
+        else -> "Sin información"
     }
 
 
@@ -333,48 +339,34 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                             text = if (isConnected) "Conectado (BLE)" else if (isScanning) "Buscando dispositivo..." else "Desconectado (Tocar)",
                             color = if (isConnected) Color.White else if (isScanning) Color(0xFFF39C12) else RedActive,
                             fontWeight = FontWeight.Bold,
-                            fontSize = 14.sp
+                            fontSize = 16.sp
                         )
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            text = "Modo: $stateText",
+                            text = "Estado: $stateText",
                             color = AccentColor,
-                            fontSize = 12.sp,
+                            fontSize = 14.sp,
                             fontWeight = FontWeight.SemiBold
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = if (status.v > 0) "🎯 Diana: Detectada" else "🔍 Buscando diana...",
+                            text = if (status.v > 0) "Diana detectada" else "Buscando diana...",
                             color = if (status.v > 0) GreenActive else Color.Gray,
-                            fontSize = 12.sp,
+                            fontSize = 14.sp,
                             fontWeight = FontWeight.Bold
                         )
                     }
                 }
 
                 // Header buttons
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(
-                        onClick = onToggleTheme,
-                        colors = ButtonDefaults.buttonColors(containerColor = GlassBg, contentColor = Color.White),
-                        contentPadding = PaddingValues(horizontal = 8.dp),
-                        modifier = Modifier.height(36.dp)
-                    ) {
-                        Text(if (isLightMode) "Diana Invertida" else "Diana Normal", fontSize = 12.sp)
-                    }
-
-                    Button(
-                        onClick = {
-                            bleManager.sendCommand("sleep")
-                            Toast.makeText(context, "Modo Carga activado. Reinicia la placa para conectar.", Toast.LENGTH_LONG).show()
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = RedActive, contentColor = Color.White),
-                        contentPadding = PaddingValues(horizontal = 8.dp),
-                        modifier = Modifier.height(36.dp)
-                    ) {
-                        Text("🔋 Apagar", fontSize = 12.sp)
-                    }
+                Button(
+                    onClick = onToggleTheme,
+                    colors = ButtonDefaults.buttonColors(containerColor = GlassBg, contentColor = Color.White),
+                    contentPadding = PaddingValues(horizontal = 12.dp),
+                    modifier = Modifier.height(40.dp)
+                ) {
+                    Text(if (isLightMode) "DIANA INVERTIDA" else "DIANA NORMAL", fontSize = 13.sp)
                 }
             }
 
@@ -397,9 +389,9 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                             val seconds = status.time / 1000
                             val deciseconds = (status.time % 1000) / 100
                             Text(
-                                text = String.format(Locale.US, "⏱ %d.%d s", seconds, deciseconds),
+                                text = String.format(Locale.US, "%d.%d s", seconds, deciseconds),
                                 color = AccentColor,
-                                fontSize = 28.sp,
+                                fontSize = 32.sp,
                                 fontWeight = FontWeight.Bold
                             )
                         }
@@ -410,17 +402,17 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                 Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.TopCenter) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(
-                            text = if (localScore > 0) String.format(Locale.US, "%.1f", localScore) else "0.0",
-                            fontSize = 48.sp,
+                            text = if (shots.isNotEmpty()) String.format(Locale.US, "%.1f", localScore) else "—",
+                            fontSize = 56.sp,
                             fontWeight = FontWeight.ExtraBold,
                             color = GreenActive,
                             modifier = Modifier.offset(y = (-4).dp)
                         )
                         if (shots.isNotEmpty()) {
                             Text(
-                                text = String.format(Locale.US, "Parada: %.0f%%", shots.last().hold10),
+                                text = String.format(Locale.US, "Estabilidad en el 10: %.0f%%", shots.last().hold10),
                                 color = Color.White,
-                                fontSize = 14.sp,
+                                fontSize = 16.sp,
                                 fontWeight = FontWeight.Bold,
                                 modifier = Modifier.offset(y = (-16).dp)
                             )
@@ -441,7 +433,7 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                             contentPadding = PaddingValues(horizontal = 8.dp),
                             modifier = Modifier.height(36.dp).padding(end = 8.dp)
                         ) {
-                            Text("Borrar", fontSize = 14.sp)
+                            Text("NUEVA SESIÓN", fontSize = 13.sp)
                         }
                     }
                     
@@ -454,7 +446,7 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                             text = "Disparos: ${shots.size}",
                             color = Color.White,
                             fontWeight = FontWeight.Bold,
-                            fontSize = 18.sp
+                            fontSize = 20.sp
                         )
                     }
                 }
@@ -508,69 +500,61 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                 Column(
                     modifier = Modifier
                         .weight(1f)
-                        .padding(start = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                        .padding(start = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    // Main Action Buttons Row
+                    // Vision and impact-centering controls
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        if (status.state == 0) {
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(48.dp)
-                                    .background(GlassBg, RoundedCornerShape(8.dp)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    "Levanta el arma para apuntar",
-                                    color = Color.White,
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        } else if (!isCalibrating) {
-                            Button(
-                                onClick = { bleManager.sendCommand("cancel_shot") },
-                                colors = ButtonDefaults.buttonColors(containerColor = RedActive),
-                                modifier = Modifier.weight(1f).height(42.dp),
-                                contentPadding = PaddingValues(0.dp)
-                            ) {
-                                Text("❌ Cancelar", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                            }
+                        Button(
+                            onClick = {
+                                bleManager.sendCommand("start_calib")
+                                Toast.makeText(context, "Ajustando la visión... Mantén el arma firme", Toast.LENGTH_LONG).show()
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = GlassBg, contentColor = Color.White),
+                            modifier = Modifier.weight(1f).height(34.dp),
+                            enabled = isConnected && !isCalibrating && status.state != 3,
+                            contentPadding = PaddingValues(0.dp)
+                        ) {
+                            Text(if (status.state == 3) "AJUSTANDO..." else "AJUSTAR VISIÓN", fontSize = 13.sp, fontWeight = FontWeight.Bold)
                         }
 
-                        if (status.state == 0 || isCalibrating) {
-                            Button(
-                                onClick = {
-                                    if (!isCalibrating) {
-                                        isCalibrating = true
+                        Button(
+                            onClick = {
+                                if (!isCalibrating) {
+                                    isCalibrating = true
+                                    calibShots.clear()
+                                    Toast.makeText(context, "Centrado iniciado. Realiza varios disparos", Toast.LENGTH_LONG).show()
+                                } else {
+                                    isCalibrating = false
+                                    if (calibShots.isNotEmpty()) {
+                                        val avgX = calibShots.map { it.x }.average().toFloat()
+                                        val avgY = calibShots.map { it.y }.average().toFloat()
+                                        calibX = avgX - 160.0f
+                                        calibY = avgY - 120.0f
+                                        prefs.edit().putFloat("calib_x", calibX).putFloat("calib_y", calibY).apply()
+                                        Toast.makeText(context, "Centrado aplicado con ${calibShots.size} disparos", Toast.LENGTH_LONG).show()
                                         calibShots.clear()
-                                        bleManager.sendCommand("start_calib")
-                                        Toast.makeText(context, "Auto-Ajustando Visión... Mantén el arma firme", Toast.LENGTH_LONG).show()
                                     } else {
-                                        isCalibrating = false
-                                        if (calibShots.isNotEmpty()) {
-                                            val avgX = calibShots.map { it.x }.average().toFloat()
-                                            val avgY = calibShots.map { it.y }.average().toFloat()
-                                            calibX = avgX - 160.0f
-                                            calibY = avgY - 120.0f
-                                            prefs.edit().putFloat("calib_x", calibX).putFloat("calib_y", calibY).apply()
-                                            Toast.makeText(context, "Calibración aplicada (Promedio de ${calibShots.size} disparos)", Toast.LENGTH_LONG).show()
-                                            calibShots.clear()
-                                        }
-                                        bleManager.sendCommand("stop_calib")
+                                        Toast.makeText(context, "Centrado cancelado: no se registraron disparos", Toast.LENGTH_LONG).show()
                                     }
-                                },
-                                colors = ButtonDefaults.buttonColors(containerColor = GlassBg, contentColor = Color.White),
-                                modifier = Modifier.weight(1f).height(42.dp),
-                                enabled = isConnected,
-                                contentPadding = PaddingValues(0.dp)
-                            ) {
-                                Text(if (!isCalibrating) "CALIBRAR" else "DETENER", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                            }
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isCalibrating) RedActive else GlassBg,
+                                contentColor = Color.White
+                            ),
+                            modifier = Modifier.weight(1f).height(34.dp),
+                            enabled = isConnected && status.state != 3,
+                            contentPadding = PaddingValues(0.dp)
+                        ) {
+                            Text(
+                                if (isCalibrating) "APLICAR (${calibShots.size})" else "CENTRAR IMPACTOS",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold
+                            )
                         }
                     }
 
@@ -580,18 +564,29 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                     ) {
                         Button(
                             onClick = { uiZoom = (uiZoom + 0.15f).coerceAtMost(5.0f) },
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.weight(1f).height(32.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = GlassBg, contentColor = Color.White)
                         ) {
-                            Text("Zoom +")
+                            Text("AMPLIAR", fontSize = 13.sp)
                         }
                         Button(
                             onClick = { uiZoom = (uiZoom - 0.15f).coerceAtLeast(0.5f) },
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.weight(1f).height(32.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = GlassBg, contentColor = Color.White)
                         ) {
-                            Text("Zoom -")
+                            Text("REDUCIR", fontSize = 13.sp)
                         }
+                    }
+
+                    Button(
+                        onClick = { showWifiCalibration = true },
+                        modifier = Modifier.fillMaxWidth().height(32.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF6C5CE7),
+                            contentColor = Color.White
+                        )
+                    ) {
+                        Text("PANEL DE CÁMARA", fontSize = 13.sp, fontWeight = FontWeight.Bold)
                     }
 
                     Row(
@@ -600,30 +595,30 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                     ) {
                         Button(
                             onClick = { showSettings = true },
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.weight(1f).height(32.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = GlassBg, contentColor = Color.White),
                             enabled = isConnected,
                             contentPadding = PaddingValues(0.dp)
                         ) {
-                            Text("⚙️ Ajustes", fontSize = 12.sp)
+                            Text("DISTANCIA", fontSize = 13.sp)
                         }
 
                         Button(
                             onClick = { showSessions = true },
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.weight(1f).height(32.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2ECC71), contentColor = Color.White),
                             contentPadding = PaddingValues(0.dp)
                         ) {
-                            Text("📥 CSV", fontSize = 12.sp)
+                            Text("SESIONES", fontSize = 13.sp)
                         }
                         
                         Button(
                             onClick = { showStats = true },
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.weight(1f).height(32.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3498DB), contentColor = Color.White),
                             contentPadding = PaddingValues(0.dp)
                         ) {
-                            Text("📊 Stats", fontSize = 12.sp)
+                            Text("ESTADÍSTICAS", fontSize = 13.sp)
                         }
                     }
                 }
@@ -631,39 +626,27 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
         }
 
         // --- DIALOGS ---
+        if (showWifiCalibration) {
+            WifiCalibrationDialog(
+                initialHost = raspberryHost,
+                onHostSaved = { host ->
+                    raspberryHost = host
+                    prefs.edit().putString("raspberry_host", host).apply()
+                },
+                onDismiss = { showWifiCalibration = false },
+            )
+        }
+
         if (showSettings) {
             SettingsDialog(
-                status = status,
                 currentDistance = distM,
-                currentSensitivity = currentSensitivity,
-                currentSound = currentSound,
-                currentExposure = currentExposure,
                 onDismiss = { showSettings = false },
-                onSaveSettings = { exposure, distance, sensitivity, sound ->
+                onSaveDistance = { distance ->
                     distM = distance
-                    currentSensitivity = sensitivity
-                    currentSound = sound
-                    currentExposure = exposure
                     prefs.edit()
                         .putFloat("dist", distance)
-                        .putInt("sensitivity", sensitivity)
-                        .putInt("sound", sound)
-                        .putInt("exposure", exposure)
                         .apply()
-                        
-                    scope.launch {
-                        bleManager.sendConfig("exp:$exposure")
-                        delay(150)
-                        bleManager.sendConfig("gain:0") // Fixed gain
-                        delay(150)
-                        bleManager.sendConfig("thr:${sensitivity * 20}")
-                        delay(150)
-                        bleManager.sendConfig("snd:${sound * 250}")
-                        delay(150)
-                        bleManager.sendConfig("max_snd:60000") // Fixed max sound (no limit)
-                    }
-
-                    Toast.makeText(context, "Ajustes enviados", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "Distancia guardada", Toast.LENGTH_SHORT).show()
                 }
             )
         }
@@ -689,16 +672,18 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                         }
                         context.startActivity(viewIntent)
                     } catch (e: Exception) {
-                        Toast.makeText(context, "No hay aplicación para abrir CSV", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, "No hay una aplicación para abrir el archivo", Toast.LENGTH_SHORT).show()
                         val shareIntent = Intent(Intent.ACTION_SEND).apply {
                             type = "text/csv"
                             putExtra(Intent.EXTRA_STREAM, FileProvider.getUriForFile(context, "${context.packageName}.provider", file))
                             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                         }
-                        context.startActivity(Intent.createChooser(shareIntent, "Abrir CSV con:"))
+                        context.startActivity(Intent.createChooser(shareIntent, "Abrir archivo con:"))
                     }
                 }
             )
         }
     }
 }
+
+
