@@ -1,70 +1,125 @@
-# Splatt Elite - Aplicación Android Nativa 🎯📱
+# Splatt Elite
 
-Esta es la aplicación móvil oficial de **Splatt Elite** (entrenador de tiro virtual DIY), desarrollada de forma nativa utilizando **Kotlin** y **Jetpack Compose**. 
+Sistema de entrenamiento de tiro formado por una Raspberry Pi con cámara, una aplicación Android y comunicación Bluetooth Low Energy (BLE).
 
-La aplicación se conecta a la placa Seeed Studio XIAO ESP32S3 Sense mediante **Bluetooth Low Energy (BLE)** para ofrecer visualización del disparo en tiempo real, calibración digital y control de la sesión de entrenamiento. Al usar BLE, se optimiza drásticamente el consumo, logrando una autonomía estimada de **3 a 4 horas continuas** con una batería de 400 mAh.
+> Estado: desarrollo y pruebas. La calibración de visión y el centrado de impactos deben terminar de validarse en pista.
 
----
+## Arquitectura activa
 
-## 🚀 Características Principales
+- **Raspberry Pi**: procesa la imagen, detecta la diana y el movimiento, gestiona el IMU, publica el visor web y actúa como periférico BLE.
+- **Aplicación Android**: muestra diana, trayectoria, impactos, puntuación, sesiones y estadísticas.
+- **Wi-Fi**: se utiliza para el visor de cámara integrado en la app.
+- **BLE**: transporta el estado, las coordenadas y los comandos entre Raspberry y Android.
 
-- **Detección de Disparo en Tiempo Real:** Dibuja sobre la diana olímpica oficial de la ISSF (escala milimétrica) el recorrido completo que realiza el arma apuntando a la diana previo a la detonación.
-- **Puntuación Automática:** Muestra la puntuación calculada del último disparo (ej. 10.9, 9.5) basándose en las coordenadas exactas del impacto registradas por la cámara.
-- **D-Pad de Calibración:** Permite ajustar milimétricamente el desfase de calibración óptica (`calib_x` y `calib_y`) de forma inalámbrica.
-- **Asistente de Enfoque:** Integra una vista o medidor para el enfoque óptico de la lente M12 de la cámara de forma inalámbrica.
-- **Modo Carga / Bajo Consumo:** Envía comandos remotos de apagado temporal al ESP32 (`/sleep`) para entrar en Deep Sleep profundo y acelerar la carga de la batería.
-- **Historial Completo:** Acceso directo con un solo toque al historial de disparos y sesiones almacenados en la tarjeta micro SD.
-- **Paleta de Colores Moderna:** Interfaz con diseño premium en modo oscuro (o tema claro alternativo) y acentos naranja.
+El software activo de la Raspberry está en:
 
----
+```text
+visor_movimiento_ble_raspberry.py
+```
 
-## 🛠️ Requisitos de Desarrollo
+La carpeta `hardware/esp32_*` contiene prototipos y firmware históricos. No representa la arquitectura activa del sistema.
 
-Para abrir, modificar o compilar este proyecto, necesitas:
+## Funciones actuales
 
-1. **Android Studio** (Versión Ladybug o superior recomendada).
-2. **Android SDK** para compilar con la versión 35 de la API.
-3. **Java Development Kit (JDK) 17** o posterior (incluido de serie en Android Studio).
+- Conexión BLE automática mediante el UUID del servicio Splatt.
+- Envío automático de la IP de la Raspberry a la app por BLE.
+- Visor web de cámara integrado en Android.
+- Representación de trayectoria e impactos sobre una diana escalada.
+- Puntuación, estabilidad en el 10, estadísticas e historial de sesiones CSV.
+- Ajuste automático de visión en la Raspberry.
+- Centrado de impactos y ajuste manual mediante pad direccional.
+- Distancia a la diana configurable entre 1 y 25 metros.
+- Tema de diana normal o invertida y ampliación de la representación.
 
----
+## Estructura
 
-## 📂 Estructura del Proyecto (Monorepo)
+```text
+app/                                   Aplicación Android
+app/src/main/java/com/splatt/elite/    Código Kotlin y Jetpack Compose
+visor_movimiento_ble_raspberry.py      Software activo de Raspberry Pi
+hardware/                              Diseños, documentación y prototipos históricos
+manual_pruebas.md                      Guía de comprobaciones
+```
 
-Este repositorio es un **Monorepo** que contiene tanto el código de la aplicación móvil como el software de la placa (ESP32) y los diseños 3D. Se divide principalmente en dos grandes bloques:
+## Aplicación Android
 
-### 📱 1. Aplicación Android (`/app`)
-La raíz del proyecto funciona como un proyecto estándar de Android Studio. El código fuente de la app se encuentra en la carpeta `app/src/main/java/com/splatt/elite/`:
-- **`MainActivity.kt`:** Interfaz principal en Jetpack Compose.
-- **`network/BleManager.kt`:** Gestor de conectividad **BLE** para hablar con el firmware.
-- **`ui/components/TargetView.kt`:** Lienzo dinámico (`Canvas`) que dibuja la diana a escala milimétrica y la trayectoria del arma.
+### Requisitos
 
-### 🔌 2. Hardware y Arduino (`/hardware`)
-Todo lo relacionado con la construcción física del dispositivo y el código del microcontrolador se encuentra aislado en la carpeta `hardware/`:
-- **`hardware/firmware/`**: Aquí está el código de **Arduino** (`esp32_splatt.ino`, `camera_pins.h`) que debes subir a la placa Seeed Studio XIAO ESP32S3 Sense.
-- **`hardware/3D_Models/`**: Archivos `.stl` listos para imprimir la carcasa protectora en 3D.
-- **`hardware/Docs/`**: Guía de uso, lista de materiales para construirlo (`BOM.md`) y todas las **Dianas oficiales para imprimir** (`Targets/`).
+- Android Studio o Gradle.
+- JDK 17 o posterior.
+- Android SDK configurado.
+- Depuración USB para instalar directamente en la tablet.
 
----
+### Compilar
 
-## 🔗 Integración con el Hardware (ESP32)
+En Windows PowerShell:
 
-La app se comunica mediante **Bluetooth Low Energy (BLE)** recibiendo notificaciones periódicas (JSON) y enviando comandos cortos:
-- Notificaciones: Recepción de JSON constante con el estado de captura, coordenadas de apunte (`x`, `y`) y métricas (`time`, `v`).
-- `start_shot` / `cancel_shot`: Activan o desactivan la espera de detonación.
-- `start_calib` / `stop_calib`: Activan o desactivan la traza visual para calibración.
-- `sleep`: Pone a la placa en Deep Sleep (Modo Carga) cortando el consumo.
-- Ajustes rápidos (ej. `exp:300`, `gain:0`, `thr:10`): Modifican los registros del sensor en tiempo real.
+```powershell
+.\gradlew.bat assembleDebug
+```
 
----
+### Instalar en un dispositivo conectado
 
-## 📤 Instrucciones para Git y GitHub
+```powershell
+.\gradlew.bat installDebug
+```
 
-Dado que ya se ha inicializado el repositorio local con un commit de los archivos base, puedes conectar este proyecto a tu cuenta de GitHub siguiendo estos pasos en tu terminal (dentro de la carpeta `scatt_android`):
+## Raspberry Pi
 
-1. **Crea un repositorio vacío** en GitHub (sin añadir README ni `.gitignore` para evitar conflictos).
-2. **Asocia y sube el código** ejecutando:
-   ```bash
-   git remote add origin https://github.com/tu-usuario/nombre-del-repositorio.git
-   git branch -M main
-   git push -u origin main
-   ```
+### Archivo activo
+
+La Raspberry ejecuta:
+
+```text
+/home/pi/visor_movimiento_ble.py
+```
+
+Para actualizarlo desde Windows:
+
+```powershell
+scp .\visor_movimiento_ble_raspberry.py pi@IP_DE_LA_RASPBERRY:/home/pi/visor_movimiento_ble.py
+```
+
+### Validar sintaxis
+
+En la Raspberry:
+
+```bash
+python3 -m py_compile /home/pi/visor_movimiento_ble.py
+```
+
+### Ejecutar
+
+```bash
+sudo python3 /home/pi/visor_movimiento_ble.py
+```
+
+El arranque mediante servicio de sistema queda pendiente. En el estado actual, los comandos `btmgmt` que publican el anuncio BLE necesitan la ejecución manual anterior.
+
+## Uso básico
+
+1. Conectar Raspberry, tablet y PC al mismo punto de acceso cuando se necesite SSH.
+2. Iniciar el programa de la Raspberry.
+3. Abrir Splatt Elite en la tablet.
+4. Esperar a que BLE conecte automáticamente.
+5. Usar `PANEL DE CÁMARA` para comprobar la imagen.
+6. Configurar la distancia real a la diana.
+7. Realizar las calibraciones y pruebas de pista.
+
+La IP puede cambiar en cada conexión. La Raspberry la anuncia por BLE y la app actualiza el panel automáticamente.
+
+## Calibraciones
+
+- **AJUSTAR VISIÓN**: inicia en la Raspberry el barrido de exposición y ganancia y guarda la mejor combinación.
+- **CENTRAR IMPACTOS**: registra varios disparos en Android y aplica su promedio como centro.
+- **Pad direccional**: permite corregir manualmente el centro en pasos pequeños.
+
+## Seguridad del trabajo
+
+- La rama `main` del nuevo repositorio debe representar siempre un estado compilable.
+- Las mejoras deben realizarse en ramas separadas y validarse antes de integrarlas.
+- Antes de sustituir el software de la Raspberry debe conservarse una copia del archivo que está funcionando.
+
+## Licencia
+
+Proyecto privado. No se concede permiso de distribución mientras no se añada una licencia explícita.
