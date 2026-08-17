@@ -17,7 +17,7 @@ El software activo de la Raspberry está en:
 raspberry/visor_movimiento_ble.py
 ```
 
-La carpeta `hardware/esp32_*` contiene prototipos y firmware históricos. No representa la arquitectura activa del sistema.
+La carpeta `legacy/esp32/` conserva la versión anterior basada en XIAO ESP32S3. No representa la arquitectura activa del sistema.
 
 ## Funciones actuales
 
@@ -37,8 +37,7 @@ La carpeta `hardware/esp32_*` contiene prototipos y firmware históricos. No rep
 app/                                   Aplicación Android
 app/src/main/java/com/splatt/elite/    Código Kotlin y Jetpack Compose
 raspberry/                             Software activo y módulos de Raspberry Pi
-hardware/                              Diseños, documentación y prototipos históricos
-manual_pruebas.md                      Guía de comprobaciones
+legacy/esp32/                          Versión anterior, documentación y diseños históricos
 ```
 
 ## Aplicación Android

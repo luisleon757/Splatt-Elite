@@ -62,7 +62,7 @@ fun TargetView(
             val targetRadiusPx = (minOf(canvasW, canvasH) * 0.9f) / 2.0f
             val mmToPx = targetRadiusPx / (targetSizeMm / 2.0f)
 
-            // Function to map ESP32 coordinates (0-320, 0-240) to millimeter offset from center
+            // Map camera/Raspberry coordinates (0-320, 0-240) to millimeter offset from center
             fun toMm(rx: Float, ry: Float): Offset {
                 // pEff ajustado de 0.011 a 0.013 para compensar que los tiros se iban muy al centro
                 val pEff = 0.013f
