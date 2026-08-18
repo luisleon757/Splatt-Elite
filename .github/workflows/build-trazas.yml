@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - trazas-3-fases
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
