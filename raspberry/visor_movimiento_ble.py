@@ -213,11 +213,12 @@ class SplattConfigCharacteristic(SplattTextWriteCharacteristic):
 
 
 def ejecutar_comando_sistema(args, obligatorio=False):
-    
     result = subprocess.run(
         args,
         text=True,
         capture_output=True,
+        input="\n",
+        timeout=5,
         check=False,
     )
 
@@ -229,10 +230,6 @@ def ejecutar_comando_sistema(args, obligatorio=False):
 
 
 def activar_anuncio_ble_directo():
-    ejecutar_comando_sistema(["rfkill", "unblock", "bluetooth"])
-    ejecutar_comando_sistema(["btmgmt", "power", "on"])
-    ejecutar_comando_sistema(["btmgmt", "connectable", "on"])
-    ejecutar_comando_sistema(["btmgmt", "name", BLE_DEVICE_NAME])
     ejecutar_comando_sistema(
         ["btmgmt", "rm-adv", BLE_ADVERTISEMENT_INSTANCE]
     )
