@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
@@ -30,6 +31,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.splatt.elite.network.BatteryStatus
 import com.splatt.elite.ui.theme.AccentColor
 
 data class ShotPoint(val x: Float, val y: Float, val label: String, val timeMs: Long = 0L, val hold10: Float = 0f, val hold9: Float = 0f)
@@ -58,6 +60,7 @@ fun TargetView(
     var showTracePunteria by remember { androidx.compose.runtime.mutableStateOf(true) }
     var showTracePre by remember { androidx.compose.runtime.mutableStateOf(true) }
     var showTracePost by remember { androidx.compose.runtime.mutableStateOf(true) }
+    val batteryPercent by BatteryStatus.percent.collectAsState()
     val bgColor = Color(0xFF1E1E1E)
     val paperColor = if (isLightMode) Color(0xFFF0E5D8) else Color(0xFF111111)
     val targetBlackColor = if (isLightMode) Color(0xFF111111) else Color(0xFFF0E5D8)
@@ -291,6 +294,22 @@ fun TargetView(
                     style = Stroke(width = 2.0f)
                 )
             }
+        }
+
+        if (batteryPercent >= 0) {
+            Text(
+                text = "🔋 $batteryPercent%",
+                color = when {
+                    batteryPercent <= 15 -> Color.Red
+                    batteryPercent <= 30 -> Color.Yellow
+                    else -> Color.White
+                },
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(10.dp)
+            )
         }
 
         Row(
