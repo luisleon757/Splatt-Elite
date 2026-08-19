@@ -107,6 +107,7 @@ class BleManager(private val context: Context) {
         bluetoothGatt?.close()
         bluetoothGatt = null
         _connectionState.value = false
+        BatteryStatus.update(-1)
     }
 
     private val gattCallback = object : BluetoothGattCallback() {
@@ -122,6 +123,7 @@ class BleManager(private val context: Context) {
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 Log.d("BleManager", "Disconnected from GATT server.")
                 _connectionState.value = false
+                BatteryStatus.update(-1)
                 bluetoothGatt?.close()
                 bluetoothGatt = null
                 // Automatically attempt to reconnect by starting scan again
@@ -190,7 +192,7 @@ class BleManager(private val context: Context) {
         val text = payload.trim()
 
         // Formato BLE compacto:
-        // estado,x,y,valida,tiempo
+        // estado,x,y,valida,tiempo,host,bateria
         if (!text.startsWith("{")) {
             val fields = text.split(",")
 
@@ -201,6 +203,8 @@ class BleManager(private val context: Context) {
                 val valid = fields[3].toIntOrNull() ?: 0
                 val time = fields.getOrNull(4)?.toLongOrNull() ?: 0L
                 val host = fields.getOrNull(5)?.trim().orEmpty()
+                val battery = fields.getOrNull(6)?.toIntOrNull() ?: -1
+                BatteryStatus.update(battery)
 
                 return SplattStatus(
                     state = state,
@@ -237,6 +241,8 @@ class BleManager(private val context: Context) {
                 map[key] = value
             }
         }
+
+        BatteryStatus.update(map["battery"]?.toIntOrNull() ?: -1)
 
         return SplattStatus(
             state = map["state"]?.toIntOrNull() ?: 0,
