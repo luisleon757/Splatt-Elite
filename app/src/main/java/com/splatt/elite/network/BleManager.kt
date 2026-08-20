@@ -192,7 +192,7 @@ class BleManager(private val context: Context) {
         val text = payload.trim()
 
         // Formato BLE compacto:
-        // estado,x,y,valida,tiempo,host,bateria
+        // estado,x,y,valida,tiempo,host,bateria,shot_x,shot_y
         if (!text.startsWith("{")) {
             val fields = text.split(",")
 
@@ -204,12 +204,14 @@ class BleManager(private val context: Context) {
                 val time = fields.getOrNull(4)?.toLongOrNull() ?: 0L
                 val host = fields.getOrNull(5)?.trim().orEmpty()
                 val battery = fields.getOrNull(6)?.toIntOrNull() ?: -1
+                val shotX = fields.getOrNull(7)?.toFloatOrNull() ?: x
+                val shotY = fields.getOrNull(8)?.toFloatOrNull() ?: y
                 BatteryStatus.update(battery)
 
                 return SplattStatus(
                     state = state,
-                    shotX = x,
-                    shotY = y,
+                    shotX = shotX,
+                    shotY = shotY,
                     time = time,
                     x = x,
                     y = y,
