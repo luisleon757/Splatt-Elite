@@ -1,4 +1,4 @@
-package com.splatt.elite.ui.components
+﻿package com.splatt.elite.ui.components
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -84,7 +84,7 @@ fun TargetView(
                 val scaleFactor = (distanceM * 1000.0f) / focalLengthPx
                 val cx = (rx - 160.0f - calibX) * scaleFactor
                 val cy = (ry - 120.0f - calibY) * scaleFactor
-                return Offset(cx, cy)
+                return Offset(-cx, -cy)
             }
 
             fun toCanvasCoordinates(offsetMm: Offset): Offset {
@@ -166,8 +166,8 @@ fun TargetView(
                 style = Stroke(width = 1.0f)
             )
 
-            // MainActivity conserva toda la traza hasta el inicio de una nueva puntería.
-            // El primer punto rojo es la primera muestra POST y marca el límite del disparo.
+            // MainActivity conserva toda la traza hasta el inicio de una nueva punterÃ­a.
+            // El primer punto rojo es la primera muestra POST y marca el lÃ­mite del disparo.
             val firstPostIndex = trace.indexOfFirst { it.color == Color.Red }
             val shotBoundaryTime = if (firstPostIndex >= 0) trace[firstPostIndex].timeMs else null
 
@@ -177,7 +177,7 @@ fun TargetView(
 
             if (firstPostIndex >= 0 && shotBoundaryTime != null) {
                 val beforeShot = trace.subList(0, firstPostIndex)
-                val preStart = (shotBoundaryTime - 500L).coerceAtLeast(0L)
+                val preStart = (shotBoundaryTime - 200L).coerceAtLeast(0L)
                 punteriaPoints = beforeShot.filter { it.timeMs < preStart }
                 prePoints = beforeShot.filter { it.timeMs >= preStart }
                 postPoints = trace.subList(firstPostIndex, trace.size)
@@ -298,7 +298,7 @@ fun TargetView(
 
         if (batteryPercent >= 0) {
             Text(
-                text = "🔋 $batteryPercent%",
+                text = "ðŸ”‹ $batteryPercent%",
                 color = when {
                     batteryPercent <= 15 -> Color.Red
                     batteryPercent <= 30 -> Color.Yellow
@@ -327,7 +327,7 @@ fun TargetView(
                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
                 modifier = Modifier.height(36.dp)
             ) {
-                Text("PUNTERÍA", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Text("PUNTER\u00CDA", fontSize = 12.sp, fontWeight = FontWeight.Bold)
             }
 
             Button(
@@ -339,7 +339,7 @@ fun TargetView(
                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
                 modifier = Modifier.height(36.dp)
             ) {
-                Text("PRE 0,5 s", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Text("PRE 0,2 s", fontSize = 12.sp, fontWeight = FontWeight.Bold)
             }
 
             Button(
@@ -360,3 +360,6 @@ fun TargetView(
 fun Color.toArgb(): Int {
     return (this.value shr 32).toInt()
 }
+
+
+

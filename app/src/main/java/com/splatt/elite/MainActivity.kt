@@ -184,10 +184,9 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
         }
         
         if (status.state == 2 && lastState != 2) {
-            // Use the last valid trace point to ensure the impact perfectly matches the visual trace
-            val lastValidTrace = trace.lastOrNull { it.x != 0.0f && it.y != 0.0f }
-            val finalShotX = lastValidTrace?.x ?: status.shotX
-            val finalShotY = lastValidTrace?.y ?: status.shotY
+            // Usar la posición histórica asociada al disparo por la Raspberry.
+            val finalShotX = status.shotX
+            val finalShotY = status.shotY
 
             // Calculate score locally
             val cx = finalShotX - 160.0f - calibX
@@ -202,8 +201,12 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
             localScore = calculatedScore.coerceIn(0.0f, 10.9f)
             
             val shotTime = status.time
+            val shotTraceTime = android.os.SystemClock.elapsedRealtime()
             val holdTimeWindowMs = 1000L
-            val lastSecTrace = trace.filter { shotTime - it.timeMs <= holdTimeWindowMs }
+            val lastSecTrace = trace.filter {
+                val age = shotTraceTime - it.timeMs
+                age in 0..holdTimeWindowMs
+            }
             var inside10 = 0
             var inside9 = 0
             lastSecTrace.forEach { pt ->
@@ -250,7 +253,7 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
             
             if (!isCalibrating) {
                 val repaintedTrace = trace.map { pt ->
-                    val timeBeforeShot = shotTime - pt.timeMs
+                    val timeBeforeShot = shotTraceTime - pt.timeMs
                     val newColor = when {
                         timeBeforeShot <= 200 -> Color(0xFF3498DB) // Azul hasta el disparo
                         timeBeforeShot <= 1000 -> Color(0xFFF1C40F) // Amarillo hasta 0.2s
@@ -276,7 +279,7 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                     else -> Color.Green // Verde durante la fase de apuntado
                 }
                 
-                trace.add(TracePoint(status.x, status.y, traceColor, status.time))
+                trace.add(TracePoint(status.x, status.y, traceColor, android.os.SystemClock.elapsedRealtime()))
                 // Se incrementa el lÃ­mite a 5000 para no borrar la traza entera
                 if (trace.size > 5000) {
                     trace.removeAt(0)
