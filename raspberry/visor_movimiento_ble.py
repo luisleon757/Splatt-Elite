@@ -21,12 +21,7 @@ from splatt_imu import SplattIMU
 
 
 # BLE
-LOCAL_GATT_MODULE = Path(__file__).with_name("bluez_gatt_server.py")
-BLE_GATT_EXAMPLE = str(
-    LOCAL_GATT_MODULE
-    if LOCAL_GATT_MODULE.exists()
-    else Path("/home/pi/bluez-examples/example-gatt-server")
-)
+BLE_GATT_EXAMPLE = "/home/pi/bluez-examples/example-gatt-server"
 BLE_SERVICE_UUID = "12345678-1234-5678-1234-56789abcdef0"
 BLE_STATUS_UUID = "12345678-1234-5678-1234-56789abcdef1"
 BLE_COMMAND_UUID = "12345678-1234-5678-1234-56789abcdef2"
@@ -34,6 +29,46 @@ BLE_CONFIG_UUID = "12345678-1234-5678-1234-56789abcdef3"
 BLE_DEVICE_NAME = "Splatt_Elite"
 BLE_ADVERTISEMENT_INSTANCE = "1"
 BLE_NOTIFY_INTERVAL_MS = 100
+
+PISUGAR_SOCKET = "/tmp/pisugar-server.sock"
+BATTERY_REFRESH_SECONDS = 5.0
+
+battery_cache_lock = threading.Lock()
+battery_cache_percent = -1
+battery_cache_updated = 0.0
+
+
+def leer_bateria_pisugar():
+    global battery_cache_percent
+    global battery_cache_updated
+
+    ahora = time.monotonic()
+
+    with battery_cache_lock:
+        if ahora - battery_cache_updated < BATTERY_REFRESH_SECONDS:
+            return battery_cache_percent
+
+    porcentaje = -1
+
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+            sock.settimeout(0.5)
+            sock.connect(PISUGAR_SOCKET)
+            sock.sendall(b"get battery\n")
+            respuesta = sock.recv(128).decode().strip()
+
+        if respuesta.startswith("battery:"):
+            porcentaje = int(round(float(respuesta.split(":", 1)[1].strip())))
+            porcentaje = max(0, min(100, porcentaje))
+
+    except Exception:
+        porcentaje = -1
+
+    with battery_cache_lock:
+        battery_cache_percent = porcentaje
+        battery_cache_updated = ahora
+
+    return porcentaje
 
 
 def obtener_ip_local():
@@ -154,9 +189,15 @@ class SplattStatusCharacteristic(ble_gatt.Characteristic):
         state = int(snapshot.get("state", 0))
         x = int(round(float(snapshot.get("x", 0))))
         y = int(round(float(snapshot.get("y", 0))))
+        shot_x = int(round(float(snapshot.get("shot_x", 0))))
+        shot_y = int(round(float(snapshot.get("shot_y", 0))))
         valid = int(snapshot.get("v", 0))
+        battery = leer_bateria_pisugar()
 
-        return f"{state},{x},{y},{valid},0,{LOCAL_IP}".encode("ascii")
+        return (
+            f"{state},{x},{y},{valid},0,{LOCAL_IP},{battery},"
+            f"{shot_x},{shot_y}"
+        ).encode("ascii")
 
     def ReadValue(self, options):
         return self._dbus_bytes(self._payload())
@@ -218,6 +259,8 @@ def ejecutar_comando_sistema(args, obligatorio=False):
         args,
         text=True,
         capture_output=True,
+        input="\n",
+        timeout=5,
         check=False,
     )
 
@@ -229,10 +272,6 @@ def ejecutar_comando_sistema(args, obligatorio=False):
 
 
 def activar_anuncio_ble_directo():
-    ejecutar_comando_sistema(["rfkill", "unblock", "bluetooth"])
-    ejecutar_comando_sistema(["btmgmt", "power", "on"])
-    ejecutar_comando_sistema(["btmgmt", "connectable", "on"])
-    ejecutar_comando_sistema(["btmgmt", "name", BLE_DEVICE_NAME])
     ejecutar_comando_sistema(
         ["btmgmt", "rm-adv", BLE_ADVERTISEMENT_INSTANCE]
     )
@@ -380,7 +419,7 @@ TRACK_ROI_SIZE = 180
 CONFIRM_FRAMES = 3
 MAX_LOST_FRAMES = 5
 MAX_CONFIRM_JUMP = 18.0
-MAX_TRACK_ERROR = 35.0
+MAX_TRACK_ERROR = 55.0
 
 # Visor
 STREAM_EVERY_N_FRAMES = 4
@@ -835,6 +874,9 @@ def capture_loop():
     # Historial de posiciones para recuperar la puntería anterior al disparo.
     position_history = deque(maxlen=180)
 
+    # Indica que el disparo actual ya tiene una posición histórica válida.
+    shot_position_valid = False
+
     fps = 0.0
     previous_frame_time = time.monotonic()
     tracking_started_at = None
@@ -857,8 +899,11 @@ def capture_loop():
         "contraste,vx_px_frame,vy_px_frame\n"
     )
 
-    camera.start()
-    time.sleep(2)
+    # La cámara permanece parada mientras el arma está en STANDBY.
+    # Se enciende al detectar postura de puntería o al calibrar.
+    camera_running = False
+    camera_idle_since = time.monotonic()
+    camera_standby_delay_s = 5.0
 
     start_time = time.monotonic()
 
@@ -884,6 +929,68 @@ def capture_loop():
                 reset_event.clear()
 
                 print("Seguimiento reiniciado")
+
+            # La IMU decide cuándo necesitamos la cámara.
+            imu_status = imu.snapshot()
+            imu_estado = imu_status.get("estado", "STANDBY")
+            postura_punteria = bool(
+                imu_status.get("postura_punteria", False)
+            )
+
+            camera_needed = (
+                calibration_active.is_set()
+                or imu_estado != "STANDBY"
+                or postura_punteria
+            )
+
+            ahora_camara = time.monotonic()
+
+            if camera_needed:
+                camera_idle_since = None
+
+                if not camera_running:
+                    camera.start()
+                    camera_running = True
+                    previous_frame_time = time.monotonic()
+
+                    print(
+                        "[CAMARA] Encendida por actividad del arma",
+                        flush=True,
+                    )
+
+            else:
+                if camera_idle_since is None:
+                    camera_idle_since = ahora_camara
+
+                if (
+                    camera_running
+                    and ahora_camara - camera_idle_since
+                    >= camera_standby_delay_s
+                ):
+                    camera.stop()
+                    camera_running = False
+
+                    print(
+                        "[CAMARA] Apagada por STANDBY",
+                        flush=True,
+                    )
+
+            # Aunque la cámara esté apagada, BLE y batería siguen activos.
+            if not camera_running:
+                actualizar_ble_status(
+                    state=0,
+                    shot_x=0,
+                    shot_y=0,
+                    time=0,
+                    x=0,
+                    y=0,
+                    v=0,
+                    s=0,
+                    c=1,
+                    f=0,
+                )
+                time.sleep(0.05)
+                continue
 
             if calibration_active.is_set():
                 mejor = calibrar_imagen(camera)
@@ -911,10 +1018,6 @@ def capture_loop():
                     )
 
                 calibration_active.clear()
-
-            # Leer IMU antes de decidir si procesar la diana.
-            imu_status = imu.snapshot()
-            imu_estado = imu_status.get("estado", "STANDBY")
 
             frame = camera.capture_array("main")
             gray = frame[:HEIGHT, :WIDTH]
@@ -1081,17 +1184,37 @@ def capture_loop():
                         reference_global=predicted_reference,
                     )
 
-                    if detection is not None:
+                    track_fail_reason = None
+
+                    if detection is None:
+                        track_fail_reason = "sin_circulo"
+                    else:
                         prediction_error = np.hypot(
                             detection["x"] - predicted_x,
                             detection["y"] - predicted_y,
                         )
 
                         if prediction_error > MAX_TRACK_ERROR:
+                            track_fail_reason = (
+                                f"error_prediccion={prediction_error:.1f}px"
+                            )
                             detection = None
 
                     if detection is None:
                         lost_count += 1
+
+                        if (
+                            lost_count == 1
+                            or lost_count >= MAX_LOST_FRAMES
+                        ):
+                            print(
+                                f"[TRACK-DIAG] "
+                                f"{track_fail_reason} "
+                                f"fallos={lost_count}/{MAX_LOST_FRAMES} "
+                                f"pred=({predicted_x:.1f},{predicted_y:.1f}) "
+                                f"radio={current_radius:.1f}",
+                                flush=True,
+                            )
 
                         track_reference = (
                             predicted_x,
@@ -1193,28 +1316,17 @@ def capture_loop():
             # 2 = POST_DISPARO
             # 3 = ENFOQUE
             if imu_estado == "STANDBY":
+                shot_position_valid = False
+                actualizar_ble_status(shot_x=0, shot_y=0)
                 app_state = 0
             elif imu_estado == "POST_DISPARO":
-                app_state = 2 if camera_ok else 3
+                app_state = 2 if (camera_ok or shot_position_valid) else 3
             else:
+                # Al terminar POST_DISPARO, borrar la posición del disparo
+                # anterior para que nunca pueda reutilizarse en el siguiente.
+                shot_position_valid = False
+                actualizar_ble_status(shot_x=0, shot_y=0)
                 app_state = 1 if camera_ok else 3
-
-            actualizar_ble_status(
-                state=app_state,
-                shot_x=app_x,
-                shot_y=app_y,
-                time=(
-                    int((now - tracking_started_at) * 1000)
-                    if tracking_started_at is not None
-                    else 0
-                ),
-                x=app_x,
-                y=app_y,
-                v=1 if (camera_ok and detection is not None) else 0,
-                s=0,
-                c=1,
-                f=0,
-            )
 
             # Asociar cada disparo IMU con la última posición válida
             # registrada por la cámara antes de la vibración.
@@ -1242,6 +1354,14 @@ def capture_loop():
                     ) * 1000.0
 
                     if age_ms <= 150.0:
+                        shot_position_valid = True
+                        app_state = 2
+
+                        actualizar_ble_status(
+                            shot_x=shot_position["x"],
+                            shot_y=shot_position["y"],
+                        )
+
                         print(
                             f"[CAMARA] DISPARO {shot_event['numero']} "
                             f"asociado X={shot_position['x']:.1f} "
@@ -1262,6 +1382,23 @@ def capture_loop():
                         "sin posición válida anterior",
                         flush=True,
                     )
+
+            # Publicar BLE después de asociar el disparo.
+            # shot_x/shot_y permanecen con la última posición histórica válida.
+            actualizar_ble_status(
+                state=app_state,
+                time=(
+                    int((now - tracking_started_at) * 1000)
+                    if tracking_started_at is not None
+                    else 0
+                ),
+                x=app_x,
+                y=app_y,
+                v=1 if (camera_ok and detection is not None) else 0,
+                s=0,
+                c=1,
+                f=0,
+            )
 
             frame_counter += 1
 
@@ -1384,7 +1521,8 @@ def capture_loop():
             publicar_jpeg(overlay)
 
     finally:
-        camera.stop()
+        if camera_running:
+            camera.stop()
         csv_file.close()
 
         if last_overlay is not None:
