@@ -1,15 +1,25 @@
-package com.splatt.elite.ui.components
+﻿package com.splatt.elite.ui.components
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Text
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -18,10 +28,18 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.splatt.elite.network.BatteryStatus
 import com.splatt.elite.ui.theme.AccentColor
 
 data class ShotPoint(val x: Float, val y: Float, val label: String, val timeMs: Long = 0L, val hold10: Float = 0f, val hold9: Float = 0f)
 data class TracePoint(val x: Float, val y: Float, val color: Color, val timeMs: Long = 0L)
+
+val TRACE_PUNTERIA_COLOR = Color(0xFF00D9FF)
+val TRACE_PRE_COLOR = Color(0xFFFFD600)
+val TRACE_POST_COLOR = Color(0xFFFF2DAA)
 
 @Composable
 fun TargetView(
@@ -39,50 +57,42 @@ fun TargetView(
     trace: List<TracePoint> = emptyList(),
     calibShots: List<Offset> = emptyList()
 ) {
-    val bgColor = Color(0xFF1E1E1E) // Siempre oscuro
+    var showTracePunteria by remember { androidx.compose.runtime.mutableStateOf(true) }
+    var showTracePre by remember { androidx.compose.runtime.mutableStateOf(true) }
+    var showTracePost by remember { androidx.compose.runtime.mutableStateOf(true) }
+    val batteryPercent by BatteryStatus.percent.collectAsState()
+    val bgColor = Color(0xFF1E1E1E)
     val paperColor = if (isLightMode) Color(0xFFF0E5D8) else Color(0xFF111111)
     val targetBlackColor = if (isLightMode) Color(0xFF111111) else Color(0xFFF0E5D8)
-    val lineAccent = Color(0xFFCCCCCC) // Siempre oscuro
 
     Box(
-        modifier = modifier
-            .background(bgColor)
+        modifier = modifier.background(bgColor)
     ) {
-        Canvas(
-            modifier = Modifier.fillMaxSize()
-        ) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
             val canvasW = size.width
             val canvasH = size.height
             val centerX = canvasW / 2
             val centerY = canvasH / 2
 
-            // Reference target width is 170mm
             val targetSizeMm = 170.0f
-            // We want the target to occupy 90% of the smallest dimension
             val targetRadiusPx = (minOf(canvasW, canvasH) * 0.9f) / 2.0f
             val mmToPx = targetRadiusPx / (targetSizeMm / 2.0f)
 
-            // Map camera/Raspberry coordinates (0-320, 0-240) to millimeter offset from center
             fun toMm(rx: Float, ry: Float): Offset {
-                // pEff ajustado de 0.011 a 0.013 para compensar que los tiros se iban muy al centro
                 val pEff = 0.013f
                 val focalLengthPx = lensMm / pEff
                 val scaleFactor = (distanceM * 1000.0f) / focalLengthPx
-                
-                // Convert to center offsets (without inversion)
                 val cx = (rx - 160.0f - calibX) * scaleFactor
                 val cy = (ry - 120.0f - calibY) * scaleFactor
-                return Offset(cx, cy)
+                return Offset(-cx, -cy)
             }
 
-            // Convert MM offsets to Canvas coordinates including Zoom
             fun toCanvasCoordinates(offsetMm: Offset): Offset {
                 val pxX = centerX + offsetMm.x * mmToPx * zoomFactor
                 val pxY = centerY + offsetMm.y * mmToPx * zoomFactor
                 return Offset(pxX, pxY)
             }
 
-            // --- DRAW TARGET PAPER (SQUARE) ---
             val paperRadius = targetRadiusPx * zoomFactor
             drawRect(
                 color = paperColor,
@@ -90,8 +100,6 @@ fun TargetView(
                 size = androidx.compose.ui.geometry.Size(paperRadius * 2, paperRadius * 2)
             )
 
-            // --- DRAW BLACK CENTER ---
-            // The black region starts from ring 4 (diameter 59.5mm)
             val blackRadiusPx = (59.5f / 2.0f) * mmToPx * zoomFactor
             drawCircle(
                 color = targetBlackColor,
@@ -99,7 +107,6 @@ fun TargetView(
                 center = Offset(centerX, centerY)
             )
 
-            // --- DRAW CONCENTRIC RINGS (ISSF) ---
             val issfD = floatArrayOf(155.5f, 139.5f, 123.5f, 107.5f, 91.5f, 75.5f, 59.5f, 43.5f, 27.5f, 11.5f)
             for (i in issfD.indices) {
                 val d = issfD[i]
@@ -117,10 +124,8 @@ fun TargetView(
                     style = Stroke(width = 1.0f)
                 )
 
-                // Draw numbers for rings (1 to 8)
-                // ISSF 10m Pistol targets usually don't print the 9, but we print up to 9
                 val numberLabel = (i + 1).toString()
-                if (d > 11.5f) { // d > 11.5f excludes the 10 ring. Includes 155.5f (ring 1)
+                if (d > 11.5f) {
                     val labelOffsetMm = (d / 2.0f) - 4.0f
                     val paint = Paint().asFrameworkPaint().apply {
                         val textColorArgb = if (isLightMode) {
@@ -133,10 +138,8 @@ fun TargetView(
                         textAlign = android.graphics.Paint.Align.CENTER
                         isAntiAlias = true
                     }
-                    
-                    val textYCorrection = paint.textSize / 3.0f
 
-                    // Draw in 4 cardinal directions
+                    val textYCorrection = paint.textSize / 3.0f
                     val directions = listOf(
                         Offset(0f, -labelOffsetMm),
                         Offset(0f, labelOffsetMm),
@@ -156,7 +159,6 @@ fun TargetView(
                 }
             }
 
-            // Draw Inner Ten Center Dot
             drawCircle(
                 color = if (isLightMode) Color(0x66FFFFFF) else Color(0x66000000),
                 radius = (5.0f / 2.0f) * mmToPx * zoomFactor,
@@ -164,30 +166,79 @@ fun TargetView(
                 style = Stroke(width = 1.0f)
             )
 
-            // --- DRAW LIVE TRAJECTORY (TRACE) ---
-            if (trace.size > 1) {
-                for (i in 0 until trace.size - 1) {
-                    val p1 = toCanvasCoordinates(toMm(trace[i].x, trace[i].y))
-                    val p2 = toCanvasCoordinates(toMm(trace[i + 1].x, trace[i + 1].y))
-                    
-                    drawLine(
-                        color = trace[i].color,
-                        start = p1,
-                        end = p2,
-                        strokeWidth = 4.5f
-                    )
+            // MainActivity conserva toda la traza hasta el inicio de una nueva punterÃ­a.
+            // El primer punto rojo es la primera muestra POST y marca el lÃ­mite del disparo.
+            val firstPostIndex = trace.indexOfFirst { it.color == Color.Red }
+            val shotBoundaryTime = if (firstPostIndex >= 0) trace[firstPostIndex].timeMs else null
+
+            val punteriaPoints: List<TracePoint>
+            val prePoints: List<TracePoint>
+            val postPoints: List<TracePoint>
+
+            if (firstPostIndex >= 0 && shotBoundaryTime != null) {
+                val beforeShot = trace.subList(0, firstPostIndex)
+                val preStart = (shotBoundaryTime - 200L).coerceAtLeast(0L)
+                punteriaPoints = beforeShot.filter { it.timeMs < preStart }
+                prePoints = beforeShot.filter { it.timeMs >= preStart }
+                postPoints = trace.subList(firstPostIndex, trace.size)
+            } else {
+                punteriaPoints = trace
+                prePoints = emptyList()
+                postPoints = emptyList()
+            }
+
+            fun drawTraceSegment(p1: TracePoint, p2: TracePoint, color: Color, strokeWidth: Float) {
+                val start = toCanvasCoordinates(toMm(p1.x, p1.y))
+                val end = toCanvasCoordinates(toMm(p2.x, p2.y))
+
+                drawLine(
+                    color = Color.Black.copy(alpha = 0.70f),
+                    start = start,
+                    end = end,
+                    strokeWidth = strokeWidth + 3.0f
+                )
+                drawLine(
+                    color = color,
+                    start = start,
+                    end = end,
+                    strokeWidth = strokeWidth
+                )
+            }
+
+            fun drawTrace(
+                points: List<TracePoint>,
+                color: Color,
+                strokeWidth: Float,
+                connectFrom: TracePoint? = null
+            ) {
+                if (points.isEmpty()) return
+                if (connectFrom != null) {
+                    drawTraceSegment(connectFrom, points.first(), color, strokeWidth)
+                }
+                for (i in 0 until points.size - 1) {
+                    drawTraceSegment(points[i], points[i + 1], color, strokeWidth)
                 }
             }
 
-            // --- DRAW PREVIOUS SHOTS ---
+            if (showTracePunteria) {
+                drawTrace(punteriaPoints, TRACE_PUNTERIA_COLOR, 3.5f)
+            }
+            if (showTracePost) {
+                val origin = prePoints.lastOrNull() ?: punteriaPoints.lastOrNull()
+                drawTrace(postPoints, TRACE_POST_COLOR, 4.5f, origin)
+            }
+            if (showTracePre) {
+                val origin = punteriaPoints.lastOrNull()
+                drawTrace(prePoints, TRACE_PRE_COLOR, 5.5f, origin)
+            }
+
             shots.forEachIndexed { index, shot ->
                 val shotPosMm = toMm(shot.x, shot.y)
                 val canvasPos = toCanvasCoordinates(shotPosMm)
-                
-                // Draw red shot mark
+
                 drawCircle(
                     color = Color(0xFFE74C3C),
-                    radius = (4.5f / 2.0f) * mmToPx * zoomFactor, // standard 4.5mm pellet size
+                    radius = (4.5f / 2.0f) * mmToPx * zoomFactor,
                     center = canvasPos
                 )
                 drawCircle(
@@ -197,7 +248,6 @@ fun TargetView(
                     style = Stroke(width = 1.5f)
                 )
 
-                // Label/Number of the shot
                 val paint = Paint().asFrameworkPaint().apply {
                     color = Color.White.toArgb()
                     textSize = (3.5f * mmToPx * zoomFactor).coerceIn(14f, 32f)
@@ -212,12 +262,11 @@ fun TargetView(
                 )
             }
 
-            // --- DRAW CALIBRATION SHOTS ---
             calibShots.forEach { shot ->
                 val shotPosMm = toMm(shot.x, shot.y)
                 val canvasPos = toCanvasCoordinates(shotPosMm)
                 drawCircle(
-                    color = Color(0xFF2ECC71), // Green
+                    color = Color(0xFF2ECC71),
                     radius = (4.5f / 2.0f) * mmToPx * zoomFactor,
                     center = canvasPos
                 )
@@ -229,12 +278,10 @@ fun TargetView(
                 )
             }
 
-            // --- DRAW LIVE TARGET (AIMING) POINT ---
             if (isTargetVisible) {
                 val targetPosMm = toMm(currentTargetX, currentTargetY)
                 val canvasPos = toCanvasCoordinates(targetPosMm)
-                
-                // Draw yellow/orange crosshair or glowing dot
+
                 drawCircle(
                     color = AccentColor,
                     radius = 8f,
@@ -248,10 +295,71 @@ fun TargetView(
                 )
             }
         }
+
+        if (batteryPercent >= 0) {
+            Text(
+                text = "ðŸ”‹ $batteryPercent%",
+                color = when {
+                    batteryPercent <= 15 -> Color.Red
+                    batteryPercent <= 30 -> Color.Yellow
+                    else -> Color.White
+                },
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(10.dp)
+            )
+        }
+
+        Row(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Button(
+                onClick = { showTracePunteria = !showTracePunteria },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (showTracePunteria) TRACE_PUNTERIA_COLOR else Color(0xAA4A4A4A),
+                    contentColor = if (showTracePunteria) Color.Black else Color.White
+                ),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                modifier = Modifier.height(36.dp)
+            ) {
+                Text("PUNTER\u00CDA", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            }
+
+            Button(
+                onClick = { showTracePre = !showTracePre },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (showTracePre) TRACE_PRE_COLOR else Color(0xAA4A4A4A),
+                    contentColor = if (showTracePre) Color.Black else Color.White
+                ),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                modifier = Modifier.height(36.dp)
+            ) {
+                Text("PRE 0,2 s", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            }
+
+            Button(
+                onClick = { showTracePost = !showTracePost },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (showTracePost) TRACE_POST_COLOR else Color(0xAA4A4A4A),
+                    contentColor = Color.White
+                ),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                modifier = Modifier.height(36.dp)
+            ) {
+                Text("POST", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            }
+        }
     }
 }
 
-// Extension to convert Compose Color to Android Color Int
 fun Color.toArgb(): Int {
     return (this.value shr 32).toInt()
 }
+
+
+

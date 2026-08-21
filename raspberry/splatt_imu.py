@@ -14,12 +14,17 @@ class SplattIMU:
 
     UMBRAL_VIBRACION = 0.045
     UMBRAL_SALTO = 0.060
+    UMBRAL_VIBRACION_DEBIL = 0.030
+    UMBRAL_SALTO_DEBIL = 0.045
     BLOQUEO_DISPARO = 0.50
+    DIAG_VENTANA = 0.020
+    DIAG_FACTOR_INICIO = 0.70
 
     TAU_HP = 0.030
-    PERIODO_MUESTREO = 0.0025  # 400 Hz
+    PERIODO_MUESTREO_ACTIVO = 0.0025   # 400 Hz
+    PERIODO_MUESTREO_STANDBY = 0.0200  # 50 Hz
 
-    ANGULO_ENTRADA_HORIZONTAL = 8.0
+    ANGULO_ENTRADA_HORIZONTAL = 10.0
     ANGULO_SALIDA_HORIZONTAL = 12.0
     TIEMPO_ENTRADA_HORIZONTAL = 0.25
     TIEMPO_SALIDA_HORIZONTAL = 0.30
@@ -44,6 +49,12 @@ class SplattIMU:
         self.lp = None
         self.aceleracion_anterior = None
         self.ultimo_disparo = -10.0
+        self.diag_activo = False
+        self.diag_inicio = 0.0
+        self.diag_vmax = 0.0
+        self.diag_jmax = 0.0
+        self.diag_j_en_vmax = 0.0
+        self.diag_v_en_jmax = 0.0
 
         self.snapshot_data = {
             "estado": self.estado,
@@ -143,6 +154,106 @@ class SplattIMU:
 
         self._cambiar_estado("POST_DISPARO", t)
 
+    def _diagnosticar_candidato(self, t, vibracion, salto, disparo):
+        # Solo observa durante PUNTERIA y fuera de los bloqueos normales.
+        if (
+            self.estado != "PUNTERIA"
+            or t - self.estado_desde < 0.25
+            or t - self.ultimo_disparo < self.BLOQUEO_DISPARO
+        ):
+            self.diag_activo = False
+            return None
+
+        inicio_candidato = (
+            vibracion >= self.UMBRAL_VIBRACION * self.DIAG_FACTOR_INICIO
+            or salto >= self.UMBRAL_SALTO * self.DIAG_FACTOR_INICIO
+        )
+
+        if not self.diag_activo:
+            if not inicio_candidato:
+                return None
+
+            self.diag_activo = True
+            self.diag_inicio = t
+            self.diag_vmax = vibracion
+            self.diag_jmax = salto
+            self.diag_j_en_vmax = salto
+            self.diag_v_en_jmax = vibracion
+        else:
+            if vibracion > self.diag_vmax:
+                self.diag_vmax = vibracion
+                self.diag_j_en_vmax = salto
+
+            if salto > self.diag_jmax:
+                self.diag_jmax = salto
+                self.diag_v_en_jmax = vibracion
+
+        # Caso fuerte: V y J coinciden en la misma muestra.
+        if disparo:
+            print(
+                f"[IMU-DIAG] CONFIRMADO "
+                f"Vmax={self.diag_vmax:.4f}g "
+                f"(J={self.diag_j_en_vmax:.4f}) "
+                f"Jmax={self.diag_jmax:.4f}g "
+                f"(V={self.diag_v_en_jmax:.4f})",
+                flush=True,
+            )
+
+            resultado = (vibracion, salto)
+            self.diag_activo = False
+            return resultado
+
+        # Caso débil/no coincidente: comprobar los máximos de 20 ms.
+        if t - self.diag_inicio >= self.DIAG_VENTANA:
+            vmax = self.diag_vmax
+            jmax = self.diag_jmax
+
+            if (
+                vmax >= self.UMBRAL_VIBRACION
+                and jmax >= self.UMBRAL_SALTO
+            ):
+                print(
+                    f"[IMU-DIAG] CONFIRMADO-VENTANA "
+                    f"Vmax={vmax:.4f}g "
+                    f"(J={self.diag_j_en_vmax:.4f}) "
+                    f"Jmax={jmax:.4f}g "
+                    f"(V={self.diag_v_en_jmax:.4f})",
+                    flush=True,
+                )
+
+                self.diag_activo = False
+                return (vmax, jmax)
+
+            if (
+                vmax >= self.UMBRAL_VIBRACION_DEBIL
+                and jmax >= self.UMBRAL_SALTO_DEBIL
+            ):
+                print(
+                    f"[IMU-DIAG] CONFIRMADO-DEBIL "
+                    f"Vmax={vmax:.4f}g "
+                    f"(J={self.diag_j_en_vmax:.4f}) "
+                    f"Jmax={jmax:.4f}g "
+                    f"(V={self.diag_v_en_jmax:.4f})",
+                    flush=True,
+                )
+
+                self.diag_activo = False
+                return (vmax, jmax)
+
+            fallos = []
+
+            if vmax < self.UMBRAL_VIBRACION:
+                fallos.append("V")
+
+            if jmax < self.UMBRAL_SALTO:
+                fallos.append("J")
+
+            motivo = "+".join(fallos)
+
+            self.diag_activo = False
+
+        return None
+
     def _procesar_estado(
         self,
         t,
@@ -163,6 +274,13 @@ class SplattIMU:
             vibracion >= self.UMBRAL_VIBRACION
             and salto >= self.UMBRAL_SALTO
             and t - self.ultimo_disparo >= self.BLOQUEO_DISPARO
+        )
+
+        disparo_detectado = self._diagnosticar_candidato(
+            t,
+            vibracion,
+            salto,
+            disparo,
         )
 
         if self.estado == "STANDBY":
@@ -189,8 +307,13 @@ class SplattIMU:
             else:
                 self.fuera_horizontal_desde = None
 
-                if disparo and t - self.estado_desde >= 0.25:
-                    self._registrar_disparo(t, vibracion, salto)
+                if disparo_detectado is not None:
+                    disparo_v, disparo_j = disparo_detectado
+                    self._registrar_disparo(
+                        t,
+                        disparo_v,
+                        disparo_j,
+                    )
 
         elif self.estado == "POST_DISPARO":
             if not horizontal_mantenimiento:
@@ -219,7 +342,12 @@ class SplattIMU:
                 time.sleep(siguiente_muestra - ahora)
                 ahora = time.perf_counter()
 
-            siguiente_muestra += self.PERIODO_MUESTREO
+            periodo_muestreo = (
+                self.PERIODO_MUESTREO_STANDBY
+                if self.estado == "STANDBY"
+                else self.PERIODO_MUESTREO_ACTIVO
+            )
+            siguiente_muestra += periodo_muestreo
 
             try:
                 datos = self.bus.read_i2c_block_data(
