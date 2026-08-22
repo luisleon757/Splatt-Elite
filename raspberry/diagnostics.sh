@@ -82,7 +82,7 @@ else
 fi
 
 section "Dependencias Python"
-python3 - <<'PY'
+python3 -u - <<'PY'
 mods = [
     ("cv2", "OpenCV"),
     ("picamera2", "Picamera2"),
@@ -96,10 +96,10 @@ failed = []
 for module, label in mods:
     try:
         __import__(module)
-        print(f"[OKPY] {label}")
+        print(f"[OKPY] {label}", flush=True)
     except Exception as exc:
         failed.append((label, str(exc)))
-        print(f"[FAILPY] {label}: {exc}")
+        print(f"[FAILPY] {label}: {exc}", flush=True)
 raise SystemExit(1 if failed else 0)
 PY
 if [ $? -eq 0 ]; then
