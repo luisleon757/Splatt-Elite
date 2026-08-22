@@ -172,7 +172,7 @@ else
 fi
 
 if have nc && [ -S /tmp/pisugar-server.sock ]; then
-    BAT="$(printf 'get battery\n' | nc -U /tmp/pisugar-server.sock 2>/dev/null || true)"
+    BAT="$(printf 'get battery\n' | timeout 2s nc -U /tmp/pisugar-server.sock 2>/dev/null || true)"
     if printf '%s' "$BAT" | grep -q '^battery:'; then
         ok "PiSugar responde: $BAT"
     else
