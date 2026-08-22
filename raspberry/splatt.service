@@ -1,0 +1,21 @@
+[Unit]
+Description=Splatt Elite camera, BLE and web service
+After=bluetooth.service dbus.service network-online.target
+Requires=bluetooth.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/pi
+
+
+ExecStart=/usr/bin/python3 /home/pi/visor_movimiento_ble.py
+
+Restart=on-failure
+RestartSec=3
+KillSignal=SIGINT
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target
