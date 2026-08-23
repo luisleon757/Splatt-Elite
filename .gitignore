@@ -27,3 +27,6 @@ local.properties
 captures/
 .externalNativeBuild/
 .cxx/
+
+# APK de referencia para recuperación de Splatt Elite
+!recovery/android/splatt-elite-reference-debug.apk
