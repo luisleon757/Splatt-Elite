@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -296,22 +297,91 @@ fun TargetView(
             }
         }
 
-        if (batteryPercent >= 0) {
-            Text(
-                text = "ðŸ”‹ $batteryPercent%",
-                color = when {
-                    batteryPercent <= 15 -> Color.Red
-                    batteryPercent <= 30 -> Color.Yellow
-                    else -> Color.White
-                },
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(10.dp)
+       if (batteryPercent >= 0) {
+    val batteryColor = when {
+        batteryPercent <= 15 -> Color.Red
+        batteryPercent <= 30 -> Color.Yellow
+        else -> Color.White
+    }
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .align(Alignment.TopEnd)
+            .padding(10.dp)
+    ) {
+        Canvas(
+            modifier = Modifier
+                .width(42.dp)
+                .height(24.dp)
+        ) {
+            val terminalWidth = size.width * 0.08f
+            val bodyWidth = size.width - terminalWidth - 3.dp.toPx()
+            val strokeWidth = 2.dp.toPx()
+
+            drawRoundRect(
+                color = batteryColor,
+                size = androidx.compose.ui.geometry.Size(
+                    bodyWidth,
+                    size.height
+                ),
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(
+                    4.dp.toPx(),
+                    4.dp.toPx()
+                ),
+                style = Stroke(width = strokeWidth)
+            )
+
+            drawRoundRect(
+                color = batteryColor,
+                topLeft = Offset(
+                    bodyWidth + 2.dp.toPx(),
+                    size.height * 0.30f
+                ),
+                size = androidx.compose.ui.geometry.Size(
+                    terminalWidth,
+                    size.height * 0.40f
+                ),
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(
+                    1.dp.toPx(),
+                    1.dp.toPx()
+                )
+            )
+
+            val fillFraction =
+                (batteryPercent.coerceIn(0, 100) / 100f)
+
+            val innerPadding = 4.dp.toPx()
+            val usableWidth =
+                (bodyWidth - innerPadding * 2).coerceAtLeast(0f)
+
+            drawRoundRect(
+                color = batteryColor,
+                topLeft = Offset(
+                    innerPadding,
+                    innerPadding
+                ),
+                size = androidx.compose.ui.geometry.Size(
+                    usableWidth * fillFraction,
+                    (size.height - innerPadding * 2)
+                        .coerceAtLeast(0f)
+                ),
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(
+                    2.dp.toPx(),
+                    2.dp.toPx()
+                )
             )
         }
 
+        Text(
+            text = "$batteryPercent%",
+            color = batteryColor,
+            fontSize = 20.sp,
+            fontWeight = FontWeight.ExtraBold,
+            modifier = Modifier.padding(start = 8.dp)
+        )
+    }
+}
         Row(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
