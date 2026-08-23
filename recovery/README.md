@@ -33,7 +33,7 @@ Este APK debe conservarse como referencia estable y no sustituirse sin crear pre
 
 El punto de recuperación completo está identificado por el tag:
 
-`recovery-android-2026-08-23`
+`recovery-complete-2026-08-23`
 
 Este tag permite recuperar exactamente el código fuente, la configuración de Raspberry Pi y el APK Android de referencia.
 
@@ -42,7 +42,7 @@ Este tag permite recuperar exactamente el código fuente, la configuración de R
 ```bash
 git clone https://github.com/luisleon757/Splatt-Elite.git
 cd Splatt-Elite
-git checkout recovery-android-2026-08-23
+git checkout recovery-complete-2026-08-23
 ```
 
 ### 2. Recuperar la Raspberry Pi
@@ -101,10 +101,9 @@ El hash obtenido debe coincidir exactamente con el indicado anteriormente.
 
 ### 4. Referencias Git
 
-* Tag de recuperación: `recovery-android-2026-08-23`
-* Commit del punto de recuperación completo: `1707037c162204788cb0e8e76fa4725d09d88004`
+* Tag de recuperación completa: `recovery-complete-2026-08-23`
+* Tag Android original: `recovery-android-2026-08-23`
 * Commit que incorporó el APK: `9168bd3`
 * Fecha: `23/08/2026`
-
 No modificar ni mover este tag. Para futuras versiones estables se deberá crear un nuevo punto de recuperación con un tag diferente.
 
