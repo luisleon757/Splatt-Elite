@@ -67,6 +67,7 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y \
     i2c-tools \
     netcat-openbsd \
     network-manager \
+    rfkill \
     python3 \
     python3-dbus \
     python3-flask \
@@ -149,6 +150,13 @@ systemctl enable bluetooth.service
 systemctl enable NetworkManager.service
 systemctl enable pisugar-server.service
 systemctl enable splatt.service
+
+log "Desbloqueando Bluetooth por rfkill..."
+rfkill unblock bluetooth
+if rfkill list bluetooth 2>/dev/null | grep -q 'Soft blocked: yes'; then
+    fail "Bluetooth continúa bloqueado por software después de rfkill unblock bluetooth."
+fi
+log "Bluetooth desbloqueado."
 
 log "Validando sintaxis Python..."
 python3 -m py_compile "${TARGET_HOME}/splatt_imu.py" "${TARGET_HOME}/visor_movimiento_ble.py"
