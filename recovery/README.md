@@ -39,6 +39,15 @@ Este tag permite recuperar exactamente el código fuente, la configuración de R
 
 ### 1. Recuperar el repositorio
 
+En una instalación limpia de Raspberry Pi OS Lite, `git` puede no estar instalado. Si el comando `git` no existe, instalar únicamente este requisito previo:
+
+```bash
+sudo apt update
+sudo apt install -y git
+```
+
+Después recuperar el repositorio:
+
 ```bash
 git clone https://github.com/luisleon757/Splatt-Elite.git
 cd Splatt-Elite
