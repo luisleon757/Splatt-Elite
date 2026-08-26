@@ -427,7 +427,7 @@ JPEG_QUALITY = 65
 TRAIL_LENGTH = 600
 
 OUTPUT_IMAGE = Path("/home/pi/visor_movimiento_ultimo.jpg")
-OUTPUT_CSV = Path("/home/pi/visor_movimiento.csv")
+LOG_DIR = Path("/home/pi/splatt_logs")
 CONFIG_FILE = Path("/home/pi/splatt_config.json")
 
 
@@ -888,15 +888,21 @@ def capture_loop():
     search_x2 = search_x1 + SEARCH_WIDTH
     search_y2 = search_y1 + SEARCH_HEIGHT
 
-    csv_file = OUTPUT_CSV.open(
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    csv_path = LOG_DIR / f"visor_{time.strftime('%Y%m%d_%H%M%S')}.csv"
+
+    csv_file = csv_path.open(
         "w",
         encoding="utf-8",
         buffering=1,
     )
 
+    print(f"Registro CSV: {csv_path}", flush=True)
+
     csv_file.write(
         "tiempo_s,x_px,y_px,radio_px,estado,"
-        "contraste,vx_px_frame,vy_px_frame\n"
+        "contraste,vx_px_frame,vy_px_frame,"
+        "fps,lost_count,search_fail_count\n"
     )
 
     # La cámara permanece parada mientras el arma está en STANDBY.
@@ -1405,7 +1411,8 @@ def capture_loop():
             if detection is None:
                 csv_file.write(
                     f"{timestamp:.6f},,,,{state},,"
-                    f"{velocity_x:.3f},{velocity_y:.3f}\n"
+                    f"{velocity_x:.3f},{velocity_y:.3f},"
+                    f"{fps:.3f},{lost_count},{search_fail_count}\n"
                 )
             else:
                 csv_file.write(
@@ -1416,7 +1423,8 @@ def capture_loop():
                     f"{state},"
                     f"{detection['contrast']:.3f},"
                     f"{velocity_x:.3f},"
-                    f"{velocity_y:.3f}\n"
+                    f"{velocity_y:.3f},"
+                    f"{fps:.3f},{lost_count},{search_fail_count}\n"
                 )
 
             # Generar solo los frames necesarios para el navegador.
@@ -1529,7 +1537,7 @@ def capture_loop():
             cv2.imwrite(str(OUTPUT_IMAGE), last_overlay)
 
         print(f"Imagen final: {OUTPUT_IMAGE}")
-        print(f"Datos: {OUTPUT_CSV}")
+        print(f"Datos: {csv_path}")
 
 
 def mjpeg_stream():
