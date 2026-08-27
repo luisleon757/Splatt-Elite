@@ -10,6 +10,7 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.os.ParcelUuid
+import android.os.SystemClock
 import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -44,6 +45,52 @@ class BleManager(private val context: Context) {
 
     private var isScanning = false
     private val handler = Handler(Looper.getMainLooper())
+
+    // La Raspberry envia estado BLE cada 100 ms.
+    // Si pasan varios segundos sin recibir nada, la conexion GATT
+    // se considera obsoleta aunque Android siga diciendo CONNECTED.
+    private val connectionTimeoutMs = 3000L
+    private val watchdogIntervalMs = 1000L
+
+    @Volatile
+    private var lastStatusReceivedAt = 0L
+
+    @Volatile
+    private var gattReady = false
+
+    private val connectionWatchdog = object : Runnable {
+        override fun run() {
+            val currentGatt = bluetoothGatt
+
+            if (_connectionState.value && currentGatt != null) {
+                val ageMs =
+                    SystemClock.elapsedRealtime() - lastStatusReceivedAt
+
+                if (
+                    lastStatusReceivedAt > 0L
+                    && ageMs > connectionTimeoutMs
+                ) {
+                    Log.w(
+                        "BleManager",
+                        "BLE watchdog: sin datos durante ${ageMs} ms"
+                    )
+                    handleConnectionLost(
+                        currentGatt,
+                        "timeout de datos BLE (${ageMs} ms)"
+                    )
+                }
+            }
+
+            handler.postDelayed(this, watchdogIntervalMs)
+        }
+    }
+
+    init {
+        handler.postDelayed(
+            connectionWatchdog,
+            watchdogIntervalMs
+        )
+    }
 
     private val scanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
@@ -103,31 +150,109 @@ class BleManager(private val context: Context) {
     }
 
     fun disconnect() {
-        bluetoothGatt?.disconnect()
-        bluetoothGatt?.close()
-        bluetoothGatt = null
-        _connectionState.value = false
-        BatteryStatus.update(-1)
+        val gatt = bluetoothGatt
+
+        if (gatt != null) {
+            handleConnectionLost(
+                gatt,
+                "desconexion solicitada",
+                reconnect = false
+            )
+        } else {
+            _connectionState.value = false
+            BatteryStatus.update(-1)
+        }
+    }
+
+    private fun handleConnectionLost(
+        gatt: BluetoothGatt,
+        reason: String,
+        reconnect: Boolean = true
+    ) {
+        handler.post {
+            // Un callback antiguo nunca debe cerrar una conexion nueva.
+            if (bluetoothGatt !== gatt) {
+                try {
+                    gatt.close()
+                } catch (_: Exception) {
+                }
+                return@post
+            }
+
+            Log.w("BleManager", "Conexion BLE perdida: $reason")
+
+            _connectionState.value = false
+            gattReady = false
+            lastStatusReceivedAt = 0L
+
+            commandChar = null
+            configChar = null
+            BatteryStatus.update(-1)
+
+            bluetoothGatt = null
+
+            try {
+                gatt.disconnect()
+            } catch (_: Exception) {
+            }
+
+            try {
+                gatt.close()
+            } catch (_: Exception) {
+            }
+
+            if (reconnect) {
+                handler.postDelayed(
+                    { startScan() },
+                    1000
+                )
+            }
+        }
     }
 
     private val gattCallback = object : BluetoothGattCallback() {
-        override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
-            Log.d("BleManager", "Connection change: status=$status newState=$newState")
-            if (newState == BluetoothProfile.STATE_CONNECTED) {
-                Log.d("BleManager", "Connected to GATT server.")
-                _connectionState.value = true
-                // Request MTU to prevent JSON truncation (with delay for Android BLE bug)
-                handler.postDelayed({
-                    gatt.requestMtu(512)
-                }, 500)
-            } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                Log.d("BleManager", "Disconnected from GATT server.")
+        override fun onConnectionStateChange(
+            gatt: BluetoothGatt,
+            status: Int,
+            newState: Int
+        ) {
+            Log.d(
+                "BleManager",
+                "Connection change: status=$status newState=$newState"
+            )
+
+            if (
+                newState == BluetoothProfile.STATE_CONNECTED
+                && status == BluetoothGatt.GATT_SUCCESS
+            ) {
+                if (bluetoothGatt !== gatt) {
+                    gatt.disconnect()
+                    gatt.close()
+                    return
+                }
+
+                Log.d("BleManager", "GATT conectado; preparando servicio.")
+
+                // Todavia no mostramos Conectado:
+                // primero deben quedar activas las notificaciones Splatt.
                 _connectionState.value = false
-                BatteryStatus.update(-1)
-                bluetoothGatt?.close()
-                bluetoothGatt = null
-                // Automatically attempt to reconnect by starting scan again
-                handler.postDelayed({ startScan() }, 1000)
+                gattReady = false
+                lastStatusReceivedAt = SystemClock.elapsedRealtime()
+
+                handler.postDelayed({
+                    if (bluetoothGatt === gatt) {
+                        gatt.requestMtu(512)
+                    }
+                }, 500)
+
+            } else if (
+                newState == BluetoothProfile.STATE_DISCONNECTED
+                || status != BluetoothGatt.GATT_SUCCESS
+            ) {
+                handleConnectionLost(
+                    gatt,
+                    "callback status=$status state=$newState"
+                )
             }
         }
 
@@ -140,23 +265,97 @@ class BleManager(private val context: Context) {
             }, 500)
         }
 
-        override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
-            if (status == BluetoothGatt.GATT_SUCCESS) {
-                val service = gatt.getService(SERVICE_UUID)
-                if (service != null) {
-                    val statusChar = service.getCharacteristic(STATUS_CHAR_UUID)
-                    commandChar = service.getCharacteristic(COMMAND_CHAR_UUID)
-                    configChar = service.getCharacteristic(CONFIG_CHAR_UUID)
+        override fun onServicesDiscovered(
+            gatt: BluetoothGatt,
+            status: Int
+        ) {
+            if (bluetoothGatt !== gatt) return
 
-                    if (statusChar != null) {
-                        gatt.setCharacteristicNotification(statusChar, true)
-                        val descriptor = statusChar.getDescriptor(CCCD_UUID)
-                        if (descriptor != null) {
-                            descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-                            gatt.writeDescriptor(descriptor)
-                        }
-                    }
-                }
+            if (status != BluetoothGatt.GATT_SUCCESS) {
+                handleConnectionLost(
+                    gatt,
+                    "fallo descubriendo servicios: $status"
+                )
+                return
+            }
+
+            val service = gatt.getService(SERVICE_UUID)
+            val statusChar =
+                service?.getCharacteristic(STATUS_CHAR_UUID)
+
+            commandChar =
+                service?.getCharacteristic(COMMAND_CHAR_UUID)
+            configChar =
+                service?.getCharacteristic(CONFIG_CHAR_UUID)
+
+            if (
+                service == null
+                || statusChar == null
+                || commandChar == null
+                || configChar == null
+            ) {
+                handleConnectionLost(
+                    gatt,
+                    "servicio o caracteristicas Splatt incompletas"
+                )
+                return
+            }
+
+            if (!gatt.setCharacteristicNotification(statusChar, true)) {
+                handleConnectionLost(
+                    gatt,
+                    "no se pudo activar notification local"
+                )
+                return
+            }
+
+            val descriptor = statusChar.getDescriptor(CCCD_UUID)
+
+            if (descriptor == null) {
+                handleConnectionLost(
+                    gatt,
+                    "CCCD no disponible"
+                )
+                return
+            }
+
+            descriptor.value =
+                BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+
+            if (!gatt.writeDescriptor(descriptor)) {
+                handleConnectionLost(
+                    gatt,
+                    "no se pudo escribir CCCD"
+                )
+            }
+        }
+
+        override fun onDescriptorWrite(
+            gatt: BluetoothGatt,
+            descriptor: BluetoothGattDescriptor,
+            status: Int
+        ) {
+            if (
+                bluetoothGatt !== gatt
+                || descriptor.uuid != CCCD_UUID
+            ) {
+                return
+            }
+
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                gattReady = true
+                lastStatusReceivedAt = SystemClock.elapsedRealtime()
+                _connectionState.value = true
+
+                Log.d(
+                    "BleManager",
+                    "Splatt BLE listo; watchdog activo."
+                )
+            } else {
+                handleConnectionLost(
+                    gatt,
+                    "fallo activando notificaciones: $status"
+                )
             }
         }
 
@@ -164,7 +363,18 @@ class BleManager(private val context: Context) {
             gatt: BluetoothGatt,
             characteristic: BluetoothGattCharacteristic
         ) {
-            if (characteristic.uuid == STATUS_CHAR_UUID) {
+            if (
+                characteristic.uuid == STATUS_CHAR_UUID
+                && bluetoothGatt === gatt
+            ) {
+                lastStatusReceivedAt = SystemClock.elapsedRealtime()
+
+                // Recibir un estado Splatt demuestra que el enlace
+                // esta realmente operativo.
+                if (gattReady) {
+                    _connectionState.value = true
+                }
+
                 val json = String(characteristic.value)
                 try {
                     val status = parseStatusJson(json)
