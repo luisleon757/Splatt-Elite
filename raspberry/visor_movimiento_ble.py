@@ -427,6 +427,34 @@ SEARCH_HEIGHT = 500
 REACQUIRE_ROI_SIZE = 360
 TRACK_ROI_SIZE = 180
 
+# Readquisicion:
+# primero alrededor de la ultima posicion conocida y,
+# si falla, barrido indefinido de todo el sensor por zonas solapadas.
+LOCAL_REACQUIRE_FRAMES = 30
+INITIAL_CENTER_SEARCH_FRAMES = 30
+
+GLOBAL_SEARCH_TILES = (
+    (0, 0, SEARCH_WIDTH, SEARCH_HEIGHT),
+    (
+        WIDTH - SEARCH_WIDTH,
+        0,
+        WIDTH,
+        SEARCH_HEIGHT,
+    ),
+    (
+        0,
+        HEIGHT - SEARCH_HEIGHT,
+        SEARCH_WIDTH,
+        HEIGHT,
+    ),
+    (
+        WIDTH - SEARCH_WIDTH,
+        HEIGHT - SEARCH_HEIGHT,
+        WIDTH,
+        HEIGHT,
+    ),
+)
+
 CONFIRM_FRAMES = 3
 MAX_LOST_FRAMES = 5
 MAX_CONFIRM_JUMP = 18.0
@@ -892,6 +920,7 @@ def capture_loop():
     previous_frame_time = time.monotonic()
     tracking_started_at = None
 
+    last_search_mode = None
     last_overlay = None
 
     search_x1 = (WIDTH - SEARCH_WIDTH) // 2
@@ -1071,9 +1100,30 @@ def capture_loop():
                 position_history.clear()
             else:
                 if state == "SEARCH":
+                    # Si ya tenemos un candidato valido, durante los
+                    # siguientes frames nos concentramos a su alrededor
+                    # para completar CONFIRM_FRAMES.
                     if (
+                        candidate_reference is not None
+                        and confirmation_count > 0
+                    ):
+                        half = REACQUIRE_ROI_SIZE // 2
+                        ref_x, ref_y, _ = candidate_reference
+
+                        x1 = ref_x - half
+                        y1 = ref_y - half
+                        x2 = ref_x + half
+                        y2 = ref_y + half
+
+                        search_reference = candidate_reference
+                        search_mode = "CONFIRM"
+
+                    # Tras perder TRACK, intentar primero cerca de la
+                    # ultima posicion valida.
+                    elif (
                         last_good_reference is not None
-                        and search_fail_count < 30
+                        and search_fail_count
+                        < LOCAL_REACQUIRE_FRAMES
                     ):
                         half = REACQUIRE_ROI_SIZE // 2
                         ref_x, ref_y, _ = last_good_reference
@@ -1084,13 +1134,56 @@ def capture_loop():
                         y2 = ref_y + half
 
                         search_reference = last_good_reference
-                    else:
+                        search_mode = "LOCAL"
+
+                    # En la primera adquisicion damos unos frames a la
+                    # zona central, que es donde normalmente se apunta.
+                    elif (
+                        last_good_reference is None
+                        and search_fail_count
+                        < INITIAL_CENTER_SEARCH_FRAMES
+                    ):
                         x1 = search_x1
                         y1 = search_y1
                         x2 = search_x2
                         y2 = search_y2
 
                         search_reference = None
+                        search_mode = "CENTER"
+
+                    # Si lo anterior falla, barrer indefinidamente las
+                    # cuatro zonas que, juntas, cubren 1280x800.
+                    else:
+                        if last_good_reference is not None:
+                            global_offset = LOCAL_REACQUIRE_FRAMES
+                        else:
+                            global_offset = INITIAL_CENTER_SEARCH_FRAMES
+
+                        tile_index = (
+                            search_fail_count - global_offset
+                        ) % len(GLOBAL_SEARCH_TILES)
+
+                        x1, y1, x2, y2 = GLOBAL_SEARCH_TILES[
+                            tile_index
+                        ]
+
+                        search_reference = None
+                        search_mode = "GLOBAL"
+
+                    if search_mode != last_search_mode:
+                        if search_mode == "GLOBAL":
+                            print(
+                                "[SEARCH] modo=GLOBAL "
+                                "cobertura=1280x800 en 4 zonas",
+                                flush=True,
+                            )
+                        else:
+                            print(
+                                f"[SEARCH] modo={search_mode}",
+                                flush=True,
+                            )
+
+                        last_search_mode = search_mode
 
                     search_rectangle = (
                         int(x1),
