@@ -411,6 +411,17 @@ MIN_RADIUS = 10
 MAX_RADIUS = 28
 MIN_CONTRAST = 8.0
 
+# Validacion adicional basada en los datos reales de pista.
+# SEARCH exige una referencia clara antes de activar TRACK.
+ACQUIRE_MIN_RADIUS = 18
+ACQUIRE_MAX_RADIUS = 28
+ACQUIRE_MIN_CONTRAST = 40.0
+
+# Una vez en TRACK permitimos algo mas de variacion.
+TRACK_MIN_RADIUS = 16
+TRACK_MAX_RADIUS = 28
+TRACK_MIN_CONTRAST = 25.0
+
 SEARCH_WIDTH = 700
 SEARCH_HEIGHT = 500
 REACQUIRE_ROI_SIZE = 360
@@ -1097,14 +1108,25 @@ def capture_loop():
                         reference_global=search_reference,
                     )
 
+                    # El contador avanza mientras sigamos en SEARCH.
+                    # Un candidato aislado ya no reinicia la escalada.
+                    search_fail_count += 1
+
+                    if detection is not None:
+                        if not (
+                            ACQUIRE_MIN_RADIUS
+                            <= detection["radius"]
+                            <= ACQUIRE_MAX_RADIUS
+                            and detection["contrast"]
+                            >= ACQUIRE_MIN_CONTRAST
+                        ):
+                            detection = None
+
                     if detection is None:
-                        search_fail_count += 1
                         confirmation_count = 0
                         candidate_reference = None
 
                     else:
-                        search_fail_count = 0
-
                         current = (
                             detection["x"],
                             detection["y"],
@@ -1150,6 +1172,7 @@ def capture_loop():
                             velocity_x = 0.0
                             velocity_y = 0.0
                             lost_count = 0
+                            search_fail_count = 0
 
                             state = "TRACK"
 
@@ -1192,8 +1215,29 @@ def capture_loop():
 
                     track_fail_reason = None
 
+                    if detection is not None:
+                        if not (
+                            TRACK_MIN_RADIUS
+                            <= detection["radius"]
+                            <= TRACK_MAX_RADIUS
+                        ):
+                            track_fail_reason = (
+                                f"radio_invalido={detection['radius']:.1f}px"
+                            )
+                            detection = None
+                        elif (
+                            detection["contrast"]
+                            < TRACK_MIN_CONTRAST
+                        ):
+                            track_fail_reason = (
+                                f"contraste_bajo="
+                                f"{detection['contrast']:.1f}"
+                            )
+                            detection = None
+
                     if detection is None:
-                        track_fail_reason = "sin_circulo"
+                        if track_fail_reason is None:
+                            track_fail_reason = "sin_circulo"
                     else:
                         prediction_error = np.hypot(
                             detection["x"] - predicted_x,
