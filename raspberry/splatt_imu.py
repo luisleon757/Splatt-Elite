@@ -16,6 +16,13 @@ class SplattIMU:
     UMBRAL_SALTO = 0.060
     UMBRAL_VIBRACION_DEBIL = 0.030
     UMBRAL_SALTO_DEBIL = 0.045
+
+    # Rescate de disparos muy débiles cuando V y J tienen
+    # magnitudes similares. Evita bajar los umbrales generales.
+    UMBRAL_VIBRACION_RESCATE = 0.035
+    UMBRAL_SALTO_RESCATE = 0.035
+    RELACION_SALTO_VIBRACION_RESCATE = 0.80
+
     BLOQUEO_DISPARO = 0.50
     DIAG_VENTANA = 0.020
     DIAG_FACTOR_INICIO = 0.70
@@ -51,6 +58,7 @@ class SplattIMU:
         self.ultimo_disparo = -10.0
         self.diag_activo = False
         self.diag_inicio = 0.0
+        self.diag_inicio_boottime_ns = 0
         self.diag_vmax = 0.0
         self.diag_jmax = 0.0
         self.diag_j_en_vmax = 0.0
@@ -132,7 +140,13 @@ class SplattIMU:
 
         print(f"[IMU] {t:8.3f}s | {anterior} -> {nuevo}")
 
-    def _registrar_disparo(self, t, vibracion, salto):
+    def _registrar_disparo(
+        self,
+        t,
+        vibracion,
+        salto,
+        shot_boottime_ns,
+    ):
         self.contador_disparos += 1
         self.ultimo_disparo = t
 
@@ -140,6 +154,7 @@ class SplattIMU:
             "numero": self.contador_disparos,
             "tiempo": t,
             "monotonic": time.monotonic(),
+            "boottime_ns": shot_boottime_ns,
             "vibracion": vibracion,
             "salto": salto,
         }
@@ -154,7 +169,14 @@ class SplattIMU:
 
         self._cambiar_estado("POST_DISPARO", t)
 
-    def _diagnosticar_candidato(self, t, vibracion, salto, disparo):
+    def _diagnosticar_candidato(
+        self,
+        t,
+        vibracion,
+        salto,
+        disparo,
+        sample_boottime_ns,
+    ):
         # Solo observa durante PUNTERIA y fuera de los bloqueos normales.
         if (
             self.estado != "PUNTERIA"
@@ -175,6 +197,7 @@ class SplattIMU:
 
             self.diag_activo = True
             self.diag_inicio = t
+            self.diag_inicio_boottime_ns = sample_boottime_ns
             self.diag_vmax = vibracion
             self.diag_jmax = salto
             self.diag_j_en_vmax = salto
@@ -199,7 +222,11 @@ class SplattIMU:
                 flush=True,
             )
 
-            resultado = (vibracion, salto)
+            resultado = (
+                vibracion,
+                salto,
+                self.diag_inicio_boottime_ns,
+            )
             self.diag_activo = False
             return resultado
 
@@ -222,7 +249,11 @@ class SplattIMU:
                 )
 
                 self.diag_activo = False
-                return (vmax, jmax)
+                return (
+                    vmax,
+                    jmax,
+                    self.diag_inicio_boottime_ns,
+                )
 
             if (
                 vmax >= self.UMBRAL_VIBRACION_DEBIL
@@ -238,7 +269,38 @@ class SplattIMU:
                 )
 
                 self.diag_activo = False
-                return (vmax, jmax)
+                return (
+                    vmax,
+                    jmax,
+                    self.diag_inicio_boottime_ns,
+                )
+
+            relacion_jv = (
+                jmax / vmax
+                if vmax > 0.0
+                else 0.0
+            )
+
+            if (
+                vmax >= self.UMBRAL_VIBRACION_RESCATE
+                and jmax >= self.UMBRAL_SALTO_RESCATE
+                and relacion_jv
+                >= self.RELACION_SALTO_VIBRACION_RESCATE
+            ):
+                print(
+                    f"[IMU-DIAG] CONFIRMADO-RESCATE "
+                    f"Vmax={vmax:.4f}g "
+                    f"Jmax={jmax:.4f}g "
+                    f"J/V={relacion_jv:.2f}",
+                    flush=True,
+                )
+
+                self.diag_activo = False
+                return (
+                    vmax,
+                    jmax,
+                    self.diag_inicio_boottime_ns,
+                )
 
             fallos = []
 
@@ -261,6 +323,7 @@ class SplattIMU:
         vibracion,
         salto,
         angulo_horizontal,
+        sample_boottime_ns,
     ):
         horizontal_entrada = (
             angulo_horizontal <= self.ANGULO_ENTRADA_HORIZONTAL
@@ -281,6 +344,7 @@ class SplattIMU:
             vibracion,
             salto,
             disparo,
+            sample_boottime_ns,
         )
 
         if self.estado == "STANDBY":
@@ -308,11 +372,17 @@ class SplattIMU:
                 self.fuera_horizontal_desde = None
 
                 if disparo_detectado is not None:
-                    disparo_v, disparo_j = disparo_detectado
+                    (
+                        disparo_v,
+                        disparo_j,
+                        disparo_boottime_ns,
+                    ) = disparo_detectado
+
                     self._registrar_disparo(
                         t,
                         disparo_v,
                         disparo_j,
+                        disparo_boottime_ns,
                     )
 
         elif self.estado == "POST_DISPARO":
@@ -350,6 +420,10 @@ class SplattIMU:
             siguiente_muestra += periodo_muestreo
 
             try:
+                sample_boottime_ns = time.clock_gettime_ns(
+                    time.CLOCK_BOOTTIME
+                )
+
                 datos = self.bus.read_i2c_block_data(
                     self.ADDR,
                     0x3B,
@@ -427,6 +501,7 @@ class SplattIMU:
                     vibracion,
                     salto,
                     angulo_horizontal,
+                    sample_boottime_ns,
                 )
 
                 with self._lock:
