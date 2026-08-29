@@ -121,6 +121,11 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
     
     // Zoom and local lists
     var uiZoom by remember { mutableStateOf(1.0f) }
+
+    var showTracePunteria by remember { mutableStateOf(true) }
+    var showTracePre by remember { mutableStateOf(true) }
+    var showTracePost by remember { mutableStateOf(true) }
+
     val shots = remember { mutableStateListOf<ShotPoint>() }
     val trace = remember { mutableStateListOf<TracePoint>() }
     val calibShots = remember { mutableStateListOf<Offset>() }
@@ -477,6 +482,9 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                     lensMm = lensMm,
                     shots = shots,
                     trace = trace,
+                    showTracePunteria = showTracePunteria,
+                    showTracePre = showTracePre,
+                    showTracePost = showTracePost,
                     calibShots = calibShots
                 )
             }
@@ -491,7 +499,7 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                     .background(PanelBg, RoundedCornerShape(12.dp))
                     .padding(8.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.Bottom
             ) {
                 CalibrationDPad(
                     onMoveUp = { calibY -= 0.5f; prefs.edit().putFloat("calib_y", calibY).apply() },
@@ -506,123 +514,332 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                         .padding(start = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    // Vision and impact-centering controls
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    // Botones de accion: 2 filas x 4 columnas.
+                    BoxWithConstraints(
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        Button(
-                            onClick = {
-                                bleManager.sendCommand("start_calib")
-                                Toast.makeText(context, "Ajustando la visión... Mantén el arma firme", Toast.LENGTH_LONG).show()
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = GlassBg, contentColor = Color.White),
-                            modifier = Modifier.weight(1f).height(34.dp),
-                            enabled = isConnected && !isCalibrating && status.state != 3,
-                            contentPadding = PaddingValues(0.dp)
-                        ) {
-                            Text(if (status.state == 3) "AJUSTANDO..." else "AJUSTAR VISIÓN", fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                        }
+                        val buttonSize = minOf(
+                            (maxWidth - 24.dp) / 4f,
+                            64.dp
+                        )
 
-                        Button(
-                            onClick = {
-                                if (!isCalibrating) {
-                                    isCalibrating = true
-                                    calibShots.clear()
-                                    Toast.makeText(context, "Centrado iniciado. Realiza varios disparos", Toast.LENGTH_LONG).show()
-                                } else {
-                                    isCalibrating = false
-                                    if (calibShots.isNotEmpty()) {
-                                        val avgX = calibShots.map { it.x }.average().toFloat()
-                                        val avgY = calibShots.map { it.y }.average().toFloat()
-                                        calibX = avgX - 160.0f
-                                        calibY = avgY - 120.0f
-                                        prefs.edit().putFloat("calib_x", calibX).putFloat("calib_y", calibY).apply()
-                                        Toast.makeText(context, "Centrado aplicado con ${calibShots.size} disparos", Toast.LENGTH_LONG).show()
-                                        calibShots.clear()
-                                    } else {
-                                        Toast.makeText(context, "Centrado cancelado: no se registraron disparos", Toast.LENGTH_LONG).show()
-                                    }
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(
+                                    8.dp,
+                                    Alignment.CenterHorizontally
+                                )
+                            ) {
+                                Button(
+                                    onClick = {
+                                        bleManager.sendCommand("start_calib")
+                                        Toast.makeText(
+                                            context,
+                                            "Ajustando la vision... Manten el arma firme",
+                                            Toast.LENGTH_LONG
+                                        ).show()
+                                    },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(0xFF6C5CE7),
+                                        contentColor = Color.White
+                                    ),
+                                    modifier = Modifier.size(buttonSize),
+                                    shape = RoundedCornerShape(10.dp),
+                                    enabled = isConnected &&
+                                        !isCalibrating &&
+                                        status.state != 3,
+                                    contentPadding = PaddingValues(3.dp)
+                                ) {
+                                    Text(
+                                        text = if (status.state == 3)
+                                            "AJUSTANDO"
+                                        else
+                                            "AJUSTAR\nVISION",
+                                        fontSize = 10.sp,
+                                        lineHeight = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        textAlign =
+                                            androidx.compose.ui.text.style.TextAlign.Center
+                                    )
                                 }
-                            },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = if (isCalibrating) RedActive else GlassBg,
-                                contentColor = Color.White
-                            ),
-                            modifier = Modifier.weight(1f).height(34.dp),
-                            enabled = isConnected && status.state != 3,
-                            contentPadding = PaddingValues(0.dp)
-                        ) {
-                            Text(
-                                if (isCalibrating) "APLICAR (${calibShots.size})" else "CENTRAR IMPACTOS",
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                Button(
+                                    onClick = {
+                                        if (!isCalibrating) {
+                                            isCalibrating = true
+                                            calibShots.clear()
+                                            Toast.makeText(
+                                                context,
+                                                "Centrado iniciado. Realiza varios disparos",
+                                                Toast.LENGTH_LONG
+                                            ).show()
+                                        } else {
+                                            isCalibrating = false
+
+                                            if (calibShots.isNotEmpty()) {
+                                                val avgX =
+                                                    calibShots.map { it.x }.average().toFloat()
+                                                val avgY =
+                                                    calibShots.map { it.y }.average().toFloat()
+
+                                                calibX = avgX - 160.0f
+                                                calibY = avgY - 120.0f
+
+                                                prefs.edit()
+                                                    .putFloat("calib_x", calibX)
+                                                    .putFloat("calib_y", calibY)
+                                                    .apply()
+
+                                                Toast.makeText(
+                                                    context,
+                                                    "Centrado aplicado con ${calibShots.size} disparos",
+                                                    Toast.LENGTH_LONG
+                                                ).show()
+
+                                                calibShots.clear()
+                                            } else {
+                                                Toast.makeText(
+                                                    context,
+                                                    "Centrado cancelado: no se registraron disparos",
+                                                    Toast.LENGTH_LONG
+                                                ).show()
+                                            }
+                                        }
+                                    },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(0xFF6C5CE7),
+                                        contentColor = Color.White
+                                    ),
+                                    modifier = Modifier.size(buttonSize),
+                                    shape = RoundedCornerShape(10.dp),
+                                    enabled = isConnected && status.state != 3,
+                                    contentPadding = PaddingValues(3.dp)
+                                ) {
+                                    Text(
+                                        text = if (isCalibrating)
+                                            "APLICAR\n(${calibShots.size})"
+                                        else
+                                            "CENTRAR\nIMPACTOS",
+                                        fontSize = 10.sp,
+                                        lineHeight = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        textAlign =
+                                            androidx.compose.ui.text.style.TextAlign.Center
+                                    )
+                                }
+
+                                Button(
+                                    onClick = {
+                                        uiZoom =
+                                            (uiZoom + 0.15f).coerceAtMost(5.0f)
+                                    },
+                                    modifier = Modifier.size(buttonSize),
+                                    shape = RoundedCornerShape(10.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(0xFF6C5CE7),
+                                        contentColor = Color.White
+                                    ),
+                                    contentPadding = PaddingValues(3.dp)
+                                ) {
+                                    Text(
+                                        "AMPLIAR",
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+
+                                Button(
+                                    onClick = {
+                                        uiZoom =
+                                            (uiZoom - 0.15f).coerceAtLeast(0.5f)
+                                    },
+                                    modifier = Modifier.size(buttonSize),
+                                    shape = RoundedCornerShape(10.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(0xFF6C5CE7),
+                                        contentColor = Color.White
+                                    ),
+                                    contentPadding = PaddingValues(3.dp)
+                                ) {
+                                    Text(
+                                        "REDUCIR",
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(
+                                    8.dp,
+                                    Alignment.CenterHorizontally
+                                )
+                            ) {
+                                Button(
+                                    onClick = { showWifiCalibration = true },
+                                    modifier = Modifier.size(buttonSize),
+                                    shape = RoundedCornerShape(10.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(0xFF6C5CE7),
+                                        contentColor = Color.White
+                                    ),
+                                    contentPadding = PaddingValues(3.dp)
+                                ) {
+                                    Text(
+                                        "PANEL\nCAMARA",
+                                        fontSize = 10.sp,
+                                        lineHeight = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        textAlign =
+                                            androidx.compose.ui.text.style.TextAlign.Center
+                                    )
+                                }
+
+                                Button(
+                                    onClick = { showSettings = true },
+                                    modifier = Modifier.size(buttonSize),
+                                    shape = RoundedCornerShape(10.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(0xFF6C5CE7),
+                                        contentColor = Color.White
+                                    ),
+                                    enabled = isConnected,
+                                    contentPadding = PaddingValues(3.dp)
+                                ) {
+                                    Text(
+                                        "DISTANCIA",
+                                        fontSize = 9.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+
+                                Button(
+                                    onClick = { showSessions = true },
+                                    modifier = Modifier.size(buttonSize),
+                                    shape = RoundedCornerShape(10.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(0xFF6C5CE7),
+                                        contentColor = Color.White
+                                    ),
+                                    contentPadding = PaddingValues(3.dp)
+                                ) {
+                                    Text(
+                                        "SESIONES",
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+
+                                Button(
+                                    onClick = { showStats = true },
+                                    modifier = Modifier.size(buttonSize),
+                                    shape = RoundedCornerShape(10.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(0xFF6C5CE7),
+                                        contentColor = Color.White
+                                    ),
+                                    contentPadding = PaddingValues(3.dp)
+                                ) {
+                                    Text(
+                                        "ESTADISTICAS",
+                                        fontSize = 8.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        textAlign =
+                                            androidx.compose.ui.text.style.TextAlign.Center
+                                    )
+                                }
+                            }
+                        }
+
+                    }
+                }
+
+                // Controles de visualizacion de trazas.
+                Column(
+                    modifier = Modifier.padding(start = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Button(
+                        onClick = {
+                            showTracePunteria = !showTracePunteria
+                        },
+                        modifier = Modifier
+                            .width(76.dp)
+                            .height(40.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor =
+                                if (showTracePunteria)
+                                    com.splatt.elite.ui.components.TRACE_PUNTERIA_COLOR
+                                else
+                                    Color(0xAA4A4A4A),
+                            contentColor =
+                                if (showTracePunteria) Color.Black else Color.White
+                        ),
+                        contentPadding = PaddingValues(2.dp)
                     ) {
-                        Button(
-                            onClick = { uiZoom = (uiZoom + 0.15f).coerceAtMost(5.0f) },
-                            modifier = Modifier.weight(1f).height(32.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = GlassBg, contentColor = Color.White)
-                        ) {
-                            Text("AMPLIAR", fontSize = 13.sp)
-                        }
-                        Button(
-                            onClick = { uiZoom = (uiZoom - 0.15f).coerceAtLeast(0.5f) },
-                            modifier = Modifier.weight(1f).height(32.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = GlassBg, contentColor = Color.White)
-                        ) {
-                            Text("REDUCIR", fontSize = 13.sp)
-                        }
+                        Text(
+                            "PUNTERIA",
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold
+                        )
                     }
 
                     Button(
-                        onClick = { showWifiCalibration = true },
-                        modifier = Modifier.fillMaxWidth().height(32.dp),
+                        onClick = {
+                            showTracePre = !showTracePre
+                        },
+                        modifier = Modifier
+                            .width(76.dp)
+                            .height(40.dp),
+                        shape = RoundedCornerShape(10.dp),
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = Color(0xFF6C5CE7),
-                            contentColor = Color.White
-                        )
+                            containerColor =
+                                if (showTracePre)
+                                    com.splatt.elite.ui.components.TRACE_PRE_COLOR
+                                else
+                                    Color(0xAA4A4A4A),
+                            contentColor =
+                                if (showTracePre) Color.Black else Color.White
+                        ),
+                        contentPadding = PaddingValues(2.dp)
                     ) {
-                        Text("PANEL DE CÁMARA", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        Text(
+                            "PRE 0,2 s",
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold
+                        )
                     }
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    Button(
+                        onClick = {
+                            showTracePost = !showTracePost
+                        },
+                        modifier = Modifier
+                            .width(76.dp)
+                            .height(40.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor =
+                                if (showTracePost)
+                                    com.splatt.elite.ui.components.TRACE_POST_COLOR
+                                else
+                                    Color(0xAA4A4A4A),
+                            contentColor = Color.White
+                        ),
+                        contentPadding = PaddingValues(2.dp)
                     ) {
-                        Button(
-                            onClick = { showSettings = true },
-                            modifier = Modifier.weight(1f).height(32.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = GlassBg, contentColor = Color.White),
-                            enabled = isConnected,
-                            contentPadding = PaddingValues(0.dp)
-                        ) {
-                            Text("DISTANCIA", fontSize = 13.sp)
-                        }
-
-                        Button(
-                            onClick = { showSessions = true },
-                            modifier = Modifier.weight(1f).height(32.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2ECC71), contentColor = Color.White),
-                            contentPadding = PaddingValues(0.dp)
-                        ) {
-                            Text("SESIONES", fontSize = 13.sp)
-                        }
-                        
-                        Button(
-                            onClick = { showStats = true },
-                            modifier = Modifier.weight(1f).height(32.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF3498DB), contentColor = Color.White),
-                            contentPadding = PaddingValues(0.dp)
-                        ) {
-                            Text("ESTADÍSTICAS", fontSize = 13.sp)
-                        }
+                        Text(
+                            "POST",
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold
+                        )
                     }
                 }
             }

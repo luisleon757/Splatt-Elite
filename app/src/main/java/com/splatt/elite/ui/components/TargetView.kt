@@ -1,4 +1,4 @@
-﻿package com.splatt.elite.ui.components
+package com.splatt.elite.ui.components
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -55,11 +55,11 @@ fun TargetView(
     lensMm: Float = 25.0f,
     shots: List<ShotPoint> = emptyList(),
     trace: List<TracePoint> = emptyList(),
+    showTracePunteria: Boolean = true,
+    showTracePre: Boolean = true,
+    showTracePost: Boolean = true,
     calibShots: List<Offset> = emptyList()
 ) {
-    var showTracePunteria by remember { androidx.compose.runtime.mutableStateOf(true) }
-    var showTracePre by remember { androidx.compose.runtime.mutableStateOf(true) }
-    var showTracePost by remember { androidx.compose.runtime.mutableStateOf(true) }
     val batteryPercent by BatteryStatus.percent.collectAsState()
     val bgColor = Color(0xFF1E1E1E)
     val paperColor = if (isLightMode) Color(0xFFF0E5D8) else Color(0xFF111111)
@@ -296,64 +296,20 @@ fun TargetView(
             }
         }
 
-        if (batteryPercent >= 0) {
-            Text(
-                text = "ðŸ”‹ $batteryPercent%",
-                color = when {
-                    batteryPercent <= 15 -> Color.Red
-                    batteryPercent <= 30 -> Color.Yellow
-                    else -> Color.White
-                },
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(10.dp)
-            )
-        }
-
-        Row(
+        Text(
+            text = if (batteryPercent >= 0) "BAT $batteryPercent%" else "BAT --%",
+            color = when {
+                batteryPercent in 0..15 -> Color.Red
+                batteryPercent in 16..30 -> Color.Yellow
+                else -> Color.White
+            },
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Bold,
             modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            Button(
-                onClick = { showTracePunteria = !showTracePunteria },
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (showTracePunteria) TRACE_PUNTERIA_COLOR else Color(0xAA4A4A4A),
-                    contentColor = if (showTracePunteria) Color.Black else Color.White
-                ),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
-                modifier = Modifier.height(36.dp)
-            ) {
-                Text("PUNTER\u00CDA", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-            }
+                .align(Alignment.TopEnd)
+                .padding(10.dp)
+        )
 
-            Button(
-                onClick = { showTracePre = !showTracePre },
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (showTracePre) TRACE_PRE_COLOR else Color(0xAA4A4A4A),
-                    contentColor = if (showTracePre) Color.Black else Color.White
-                ),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
-                modifier = Modifier.height(36.dp)
-            ) {
-                Text("PRE 0,2 s", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-            }
-
-            Button(
-                onClick = { showTracePost = !showTracePost },
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (showTracePost) TRACE_POST_COLOR else Color(0xAA4A4A4A),
-                    contentColor = Color.White
-                ),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
-                modifier = Modifier.height(36.dp)
-            ) {
-                Text("POST", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-            }
-        }
     }
 }
 
