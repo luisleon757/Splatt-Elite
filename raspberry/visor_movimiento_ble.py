@@ -526,6 +526,16 @@ frame_condition = threading.Condition()
 latest_jpeg = None
 latest_frame_number = 0
 
+# El JPEG solo trabaja mientras haya un cliente conectado a /video.
+video_clients_lock = threading.Lock()
+video_clients = 0
+
+# Cola de un único frame para el hilo JPEG.
+# Si el codificador se retrasa, se conserva únicamente el más reciente.
+jpeg_condition = threading.Condition()
+pending_jpeg_image = None
+pending_jpeg_number = 0
+
 
 def evaluar_circulo(gray_roi, x, y, radius, reference=None):
     inner_radius = max(2, int(radius * 0.65))
@@ -831,6 +841,49 @@ def publicar_jpeg(image):
         frame_condition.notify_all()
 
 
+def visor_activo():
+    with video_clients_lock:
+        return video_clients > 0
+
+
+def solicitar_jpeg(image):
+    global pending_jpeg_image
+    global pending_jpeg_number
+
+    with jpeg_condition:
+        pending_jpeg_image = image
+        pending_jpeg_number += 1
+        jpeg_condition.notify()
+
+
+def jpeg_loop():
+    last_pending_number = 0
+
+    while not stop_event.is_set():
+        with jpeg_condition:
+            jpeg_condition.wait_for(
+                lambda: (
+                    pending_jpeg_number != last_pending_number
+                    or stop_event.is_set()
+                ),
+                timeout=1.0,
+            )
+
+            if stop_event.is_set():
+                return
+
+            if pending_jpeg_number == last_pending_number:
+                continue
+
+            image = pending_jpeg_image
+            last_pending_number = pending_jpeg_number
+
+        if image is None:
+            continue
+
+        publicar_jpeg(image)
+
+
 def dibujar_trayectoria(image, trail):
     previous = None
 
@@ -913,6 +966,11 @@ def capture_loop():
     # Historial de posiciones para recuperar la puntería anterior al disparo.
     position_history = deque(maxlen=180)
 
+    # Un disparo se mantiene pendiente hasta que la cámara haya entregado
+    # un frame posterior a su timestamp. Así sabemos que ya han llegado
+    # todos los frames físicamente capturados antes del disparo.
+    pending_shots = deque(maxlen=16)
+
     # Indica que el disparo actual ya tiene una posición histórica válida.
     shot_position_valid = False
 
@@ -971,6 +1029,7 @@ def capture_loop():
 
                 trail.clear()
                 position_history.clear()
+                pending_shots.clear()
                 tracking_started_at = None
                 reset_event.clear()
 
@@ -985,6 +1044,7 @@ def capture_loop():
 
             camera_needed = (
                 calibration_active.is_set()
+                or visor_activo()
                 or imu_estado != "STANDBY"
                 or postura_punteria
             )
@@ -1065,8 +1125,21 @@ def capture_loop():
 
                 calibration_active.clear()
 
-            frame = camera.capture_array("main")
+            request = camera.capture_request()
+
+            try:
+                frame_metadata = request.get_metadata()
+                frame = request.make_array("main")
+            finally:
+                request.release()
+
             gray = frame[:HEIGHT, :WIDTH]
+
+            # SensorTimestamp identifica temporalmente el fotograma
+            # en CLOCK_BOOTTIME, el mismo reloj usado ahora por la IMU.
+            frame_boottime_ns = frame_metadata.get(
+                "SensorTimestamp"
+            )
 
             now = time.monotonic()
             timestamp = now - start_time
@@ -1444,6 +1517,7 @@ def capture_loop():
 
                 position_history.append({
                     "monotonic": now,
+                    "boottime_ns": frame_boottime_ns,
                     "x": app_x,
                     "y": app_y,
                     "valid": 1 if detection is not None else 0,
@@ -1463,7 +1537,14 @@ def capture_loop():
                 actualizar_ble_status(shot_x=0, shot_y=0)
                 app_state = 0
             elif imu_estado == "POST_DISPARO":
-                app_state = 2 if (camera_ok or shot_position_valid) else 3
+                # No anunciar RESULTADO a Android hasta que la posición
+                # histórica del disparo haya quedado asociada.
+                if shot_position_valid:
+                    app_state = 2
+                elif camera_ok:
+                    app_state = 1
+                else:
+                    app_state = 3
             else:
                 # Al terminar POST_DISPARO, borrar la posición del disparo
                 # anterior para que nunca pueda reutilizarse en el siguiente.
@@ -1471,23 +1552,58 @@ def capture_loop():
                 actualizar_ble_status(shot_x=0, shot_y=0)
                 app_state = 1 if camera_ok else 3
 
-            # Asociar cada disparo IMU con la última posición válida
-            # registrada por la cámara antes de la vibración.
+            # Recoger eventos IMU sin asociarlos todavía.
             while True:
                 shot_event = imu.consume_shot()
 
                 if shot_event is None:
                     break
 
+                pending_shots.append(shot_event)
+
+            # Asociar solamente cuando la cámara ya haya cruzado
+            # temporalmente el instante físico del disparo.
+            while pending_shots:
+                shot_event = pending_shots[0]
+
+                if (
+                    shot_event.get("boottime_ns") is not None
+                    and frame_boottime_ns is not None
+                    and frame_boottime_ns
+                    <= shot_event["boottime_ns"]
+                ):
+                    break
+
+                pending_shots.popleft()
+
                 posiciones_validas = [
                     posicion
                     for posicion in position_history
                     if (
                         posicion["valid"] == 1
-                        and posicion["monotonic"]
-                        <= shot_event["monotonic"]
+                        and posicion.get("boottime_ns") is not None
+                        and shot_event.get("boottime_ns") is not None
+                        and posicion["boottime_ns"]
+                        <= shot_event["boottime_ns"]
                     )
                 ]
+
+                frames_anteriores = [
+                    posicion
+                    for posicion in position_history
+                    if (
+                        posicion.get("boottime_ns") is not None
+                        and shot_event.get("boottime_ns") is not None
+                        and posicion["boottime_ns"]
+                        <= shot_event["boottime_ns"]
+                    )
+                ]
+
+                frame_previo = (
+                    frames_anteriores[-1]
+                    if frames_anteriores
+                    else None
+                )
 
                 if posiciones_validas:
                     shot_position = posiciones_validas[-1]
@@ -1495,6 +1611,67 @@ def capture_loop():
                         shot_event["monotonic"]
                         - shot_position["monotonic"]
                     ) * 1000.0
+
+                    sensor_delta_ms = None
+                    frame_delta_ms = None
+                    detection_gap_ms = None
+
+                    if (
+                        shot_event.get("boottime_ns") is not None
+                        and shot_position.get("boottime_ns") is not None
+                    ):
+                        sensor_delta_ms = (
+                            shot_event["boottime_ns"]
+                            - shot_position["boottime_ns"]
+                        ) / 1_000_000.0
+
+                    if (
+                        frame_previo is not None
+                        and shot_event.get("boottime_ns") is not None
+                    ):
+                        frame_delta_ms = (
+                            shot_event["boottime_ns"]
+                            - frame_previo["boottime_ns"]
+                        ) / 1_000_000.0
+
+                    if (
+                        sensor_delta_ms is not None
+                        and frame_delta_ms is not None
+                    ):
+                        detection_gap_ms = (
+                            sensor_delta_ms - frame_delta_ms
+                        )
+
+                    frame_text = (
+                        f"{frame_delta_ms:.3f} ms"
+                        if frame_delta_ms is not None
+                        else "no disponible"
+                    )
+                    posicion_text = (
+                        f"{sensor_delta_ms:.3f} ms"
+                        if sensor_delta_ms is not None
+                        else "no disponible"
+                    )
+                    gap_text = (
+                        f"{detection_gap_ms:.3f} ms"
+                        if detection_gap_ms is not None
+                        else "no disponible"
+                    )
+                    frame_valid_text = (
+                        str(frame_previo.get("valid", 0))
+                        if frame_previo is not None
+                        else "N/A"
+                    )
+
+                    print(
+                        f"[CAMARA-TIMING] DISPARO "
+                        f"{shot_event['numero']} "
+                        f"frame_previo={frame_text} "
+                        f"frame_valid={frame_valid_text} "
+                        f"posicion_valida={posicion_text} "
+                        f"gap_deteccion={gap_text}",
+                        flush=True,
+                    )
 
                     if age_ms <= 150.0:
                         shot_position_valid = True
@@ -1505,11 +1682,18 @@ def capture_loop():
                             shot_y=shot_position["y"],
                         )
 
+                        sensor_text = (
+                            f"{sensor_delta_ms:.3f} ms"
+                            if sensor_delta_ms is not None
+                            else "no disponible"
+                        )
+
                         print(
                             f"[CAMARA] DISPARO {shot_event['numero']} "
                             f"asociado X={shot_position['x']:.1f} "
                             f"Y={shot_position['y']:.1f} "
-                            f"antigüedad={age_ms:.1f} ms",
+                            f"antigüedad_python={age_ms:.1f} ms "
+                            f"delta_sensor={sensor_text}",
                             flush=True,
                         )
                     else:
@@ -1564,7 +1748,12 @@ def capture_loop():
                     f"{fps:.3f},{lost_count},{search_fail_count}\n"
                 )
 
-            # Generar solo los frames necesarios para el navegador.
+            # El visor no consume CPU durante el funcionamiento normal.
+            # Solo generamos imagen si existe un cliente conectado a /video.
+            if not visor_activo():
+                continue
+
+            # Limitar además la frecuencia visual.
             if frame_counter % STREAM_EVERY_N_FRAMES != 0:
                 continue
 
@@ -1663,7 +1852,7 @@ def capture_loop():
             )
 
             last_overlay = overlay
-            publicar_jpeg(overlay)
+            solicitar_jpeg(overlay)
 
     finally:
         if camera_running:
@@ -1678,32 +1867,59 @@ def capture_loop():
 
 
 def mjpeg_stream():
-    last_number = -1
+    global video_clients
 
-    while not stop_event.is_set():
-        with frame_condition:
-            frame_condition.wait_for(
-                lambda: (
-                    latest_frame_number != last_number
-                    or stop_event.is_set()
-                ),
-                timeout=1.0,
+    with video_clients_lock:
+        video_clients += 1
+        clients_now = video_clients
+
+    print(
+        f"[VISOR] Panel de cámara activo clientes={clients_now}",
+        flush=True,
+    )
+
+    # No reutilizar un JPEG antiguo de una conexión anterior.
+    with frame_condition:
+        last_number = latest_frame_number
+
+    try:
+        while not stop_event.is_set():
+            with frame_condition:
+                frame_condition.wait_for(
+                    lambda: (
+                        latest_frame_number != last_number
+                        or stop_event.is_set()
+                    ),
+                    timeout=1.0,
+                )
+
+                if stop_event.is_set():
+                    return
+
+                if latest_frame_number == last_number:
+                    continue
+
+                frame = latest_jpeg
+                last_number = latest_frame_number
+
+            if frame is None:
+                continue
+
+            yield (
+                b"--frame\r\n"
+                b"Content-Type: image/jpeg\r\n\r\n"
+                + frame
+                + b"\r\n"
             )
 
-            if stop_event.is_set():
-                return
+    finally:
+        with video_clients_lock:
+            video_clients = max(0, video_clients - 1)
+            clients_now = video_clients
 
-            frame = latest_jpeg
-            last_number = latest_frame_number
-
-        if frame is None:
-            continue
-
-        yield (
-            b"--frame\r\n"
-            b"Content-Type: image/jpeg\r\n\r\n"
-            + frame
-            + b"\r\n"
+        print(
+            f"[VISOR] Panel de cámara cerrado clientes={clients_now}",
+            flush=True,
         )
 
 
@@ -1785,8 +2001,14 @@ if __name__ == "__main__":
         daemon=True,
         name="ble-server",
     )
+    jpeg_worker = threading.Thread(
+        target=jpeg_loop,
+        daemon=True,
+        name="jpeg-encoder",
+    )
 
     imu.start()
+    jpeg_worker.start()
     camera_worker.start()
     ble_worker.start()
 
@@ -1805,6 +2027,10 @@ if __name__ == "__main__":
         with frame_condition:
             frame_condition.notify_all()
 
+        with jpeg_condition:
+            jpeg_condition.notify_all()
+
         imu.stop()
         camera_worker.join(timeout=5)
+        jpeg_worker.join(timeout=3)
         ble_worker.join(timeout=3)
