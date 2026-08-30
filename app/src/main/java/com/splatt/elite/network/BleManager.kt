@@ -16,6 +16,20 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.util.UUID
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+
+data class SplattTracePoint(
+    val dtMs: Int,
+    val x: Float,
+    val y: Float,
+    val valid: Boolean
+)
+
+data class SplattCompletedTrace(
+    val shotId: Int,
+    val points: List<SplattTracePoint>
+)
 
 @SuppressLint("MissingPermission")
 class BleManager(private val context: Context) {
@@ -29,6 +43,13 @@ class BleManager(private val context: Context) {
 
     private val _statusFlow = MutableStateFlow(SplattStatus())
     val statusFlow: StateFlow<SplattStatus> = _statusFlow.asStateFlow()
+
+    private val _completedTraceFlow =
+        MutableStateFlow<SplattCompletedTrace?>(null)
+
+    val completedTraceFlow:
+        StateFlow<SplattCompletedTrace?> =
+        _completedTraceFlow.asStateFlow()
 
     private val _isScanningState = MutableStateFlow(false)
     val isScanningState: StateFlow<Boolean> = _isScanningState.asStateFlow()
@@ -99,7 +120,14 @@ class BleManager(private val context: Context) {
             val name = result.scanRecord?.deviceName ?: device.name ?: ""
             Log.d("BleManager", "Scan: name='$name' address=${device.address}")
             stopScan()
-            connectToDevice(device)
+
+            // Dar tiempo al stack Bluetooth de Android a cerrar
+            // el escaneo antes de iniciar la conexion GATT.
+            handler.postDelayed({
+                if (!_connectionState.value && bluetoothGatt == null) {
+                    connectToDevice(device)
+                }
+            }, 350L)
         }
     }
 
@@ -109,7 +137,7 @@ class BleManager(private val context: Context) {
         if (_connectionState.value) return
 
         val scanner = bluetoothAdapter.bluetoothLeScanner ?: return
-        
+
         isScanning = true
         _isScanningState.value = true
         val filters = listOf(
@@ -122,14 +150,14 @@ class BleManager(private val context: Context) {
             .build()
 
         scanner.startScan(filters, settings, scanCallback)
-        
-        // Stop scan after 10 seconds
-        handler.postDelayed({
-            stopScan()
-            if (!_connectionState.value) {
-                handler.postDelayed({ startScan() }, 1500)
-            }
-        }, 10000)
+
+        // Splatt es un dispositivo dedicado.
+        // Mantener el escaneo activo hasta encontrarlo.
+        // No introducir pausas periodicas entre busquedas.
+        Log.d(
+            "BleManager",
+            "Escaneo BLE continuo iniciado"
+        )
     }
 
     fun stopScan() {
@@ -164,6 +192,256 @@ class BleManager(private val context: Context) {
         }
     }
 
+
+
+    private var traceRxShotId = -1
+    private var traceRxExpectedPoints = 0
+    private var traceRxExpectedBlocks = 0
+    private var traceRxNextBlock = 0
+    private var traceRxError = false
+
+    private val traceRxPoints =
+        mutableListOf<SplattTracePoint>()
+
+    private fun resetTraceRx() {
+        traceRxShotId = -1
+        traceRxExpectedPoints = 0
+        traceRxExpectedBlocks = 0
+        traceRxNextBlock = 0
+        traceRxError = false
+        traceRxPoints.clear()
+        _completedTraceFlow.value = null
+    }
+
+    private fun u16(buffer: ByteBuffer): Int {
+        return buffer.short.toInt() and 0xFFFF
+    }
+
+    private fun processTracePacket(data: ByteArray) {
+        if (data.isEmpty()) {
+            return
+        }
+
+        val type = data[0].toInt() and 0xFF
+
+        try {
+            when (type) {
+                1 -> {
+                    // START:
+                    // type, version, disparo_id, puntos, bloques
+                    if (data.size != 8) {
+                        Log.e(
+                            "BleManager",
+                            "[TRACE-RX] START tama?o invalido ${data.size}"
+                        )
+                        resetTraceRx()
+                        return
+                    }
+
+                    val buffer = ByteBuffer
+                        .wrap(data)
+                        .order(ByteOrder.LITTLE_ENDIAN)
+
+                    buffer.get()
+
+                    val version =
+                        buffer.get().toInt() and 0xFF
+
+                    val shotId = u16(buffer)
+                    val totalPoints = u16(buffer)
+                    val totalBlocks = u16(buffer)
+
+                    resetTraceRx()
+
+                    traceRxShotId = shotId
+                    traceRxExpectedPoints = totalPoints
+                    traceRxExpectedBlocks = totalBlocks
+
+                    if (version != 1) {
+                        traceRxError = true
+                    }
+
+                    Log.d(
+                        "BleManager",
+                        "[TRACE-RX] START " +
+                            "disparo_id=$shotId " +
+                            "version=$version " +
+                            "puntos=$totalPoints " +
+                            "bloques=$totalBlocks"
+                    )
+                }
+
+                2 -> {
+                    // DATA:
+                    // type, disparo_id, bloque, cantidad, puntos...
+                    if (data.size < 6) {
+                        Log.e(
+                            "BleManager",
+                            "[TRACE-RX] DATA demasiado corto"
+                        )
+                        traceRxError = true
+                        return
+                    }
+
+                    val buffer = ByteBuffer
+                        .wrap(data)
+                        .order(ByteOrder.LITTLE_ENDIAN)
+
+                    buffer.get()
+
+                    val shotId = u16(buffer)
+                    val block = u16(buffer)
+                    val count =
+                        buffer.get().toInt() and 0xFF
+
+                    val expectedSize =
+                        6 + count * 7
+
+                    if (data.size != expectedSize) {
+                        Log.e(
+                            "BleManager",
+                            "[TRACE-RX] DATA tama?o invalido " +
+                                "bloque=$block " +
+                                "size=${data.size} " +
+                                "esperado=$expectedSize"
+                        )
+                        traceRxError = true
+                        return
+                    }
+
+                    if (shotId != traceRxShotId) {
+                        Log.e(
+                            "BleManager",
+                            "[TRACE-RX] disparo_id inesperado " +
+                                "$shotId != $traceRxShotId"
+                        )
+                        traceRxError = true
+                        return
+                    }
+
+                    if (block != traceRxNextBlock) {
+                        Log.e(
+                            "BleManager",
+                            "[TRACE-RX] bloque inesperado " +
+                                "$block != $traceRxNextBlock"
+                        )
+                        traceRxError = true
+                    }
+
+                    repeat(count) {
+                        val dtMs =
+                            buffer.short.toInt()
+
+                        val x100 =
+                            buffer.short.toInt()
+
+                        val y100 =
+                            buffer.short.toInt()
+
+                        val valid =
+                            (buffer.get().toInt() and 0xFF) != 0
+
+                        traceRxPoints.add(
+                            SplattTracePoint(
+                                dtMs = dtMs,
+                                x = x100 / 100.0f,
+                                y = y100 / 100.0f,
+                                valid = valid
+                            )
+                        )
+                    }
+
+                    traceRxNextBlock = block + 1
+                }
+
+                3 -> {
+                    // END:
+                    // type, disparo_id, puntos, bloques
+                    if (data.size != 7) {
+                        Log.e(
+                            "BleManager",
+                            "[TRACE-RX] END tama?o invalido ${data.size}"
+                        )
+                        traceRxError = true
+                        return
+                    }
+
+                    val buffer = ByteBuffer
+                        .wrap(data)
+                        .order(ByteOrder.LITTLE_ENDIAN)
+
+                    buffer.get()
+
+                    val shotId = u16(buffer)
+                    val totalPoints = u16(buffer)
+                    val totalBlocks = u16(buffer)
+
+                    val validPoints =
+                        traceRxPoints.count { it.valid }
+
+                    val firstDt =
+                        traceRxPoints.firstOrNull()?.dtMs
+
+                    val lastDt =
+                        traceRxPoints.lastOrNull()?.dtMs
+
+                    val ok = (
+                        !traceRxError
+                        && shotId == traceRxShotId
+                        && totalPoints == traceRxExpectedPoints
+                        && totalBlocks == traceRxExpectedBlocks
+                        && traceRxPoints.size ==
+                            traceRxExpectedPoints
+                        && traceRxNextBlock ==
+                            traceRxExpectedBlocks
+                    )
+
+                    Log.d(
+                        "BleManager",
+                        "[TRACE-RX] END " +
+                            "disparo_id=$shotId " +
+                            "puntos=${traceRxPoints.size}/" +
+                            "$traceRxExpectedPoints " +
+                            "bloques=$traceRxNextBlock/" +
+                            "$traceRxExpectedBlocks " +
+                            "validos=$validPoints " +
+                            "dt=$firstDt..$lastDt " +
+                            "ok=${if (ok) 1 else 0}"
+                    )
+                    if (ok) {
+                        _completedTraceFlow.value =
+                            SplattCompletedTrace(
+                                shotId = shotId,
+                                points = traceRxPoints.toList()
+                            )
+
+                        Log.d(
+                            "BleManager",
+                            "[TRACE-RX] traza definitiva publicada " +
+                                "disparo_id=$shotId"
+                        )
+                    }
+                }
+
+                else -> {
+                    Log.w(
+                        "BleManager",
+                        "[TRACE-RX] tipo desconocido=$type"
+                    )
+                }
+            }
+
+        } catch (e: Exception) {
+            traceRxError = true
+
+            Log.e(
+                "BleManager",
+                "[TRACE-RX] error: ${e.message}",
+                e
+            )
+        }
+    }
+
     private fun handleConnectionLost(
         gatt: BluetoothGatt,
         reason: String,
@@ -187,6 +465,7 @@ class BleManager(private val context: Context) {
 
             commandChar = null
             configChar = null
+            resetTraceRx()
             BatteryStatus.update(-1)
 
             bluetoothGatt = null
@@ -232,6 +511,32 @@ class BleManager(private val context: Context) {
                 }
 
                 Log.d("BleManager", "GATT conectado; preparando servicio.")
+
+                // La tabla GATT de Splatt ha cambiado durante el desarrollo.
+                // Algunos Android conservan handles antiguos y devuelven
+                // status=1 al escribir el CCCD. Forzar una recarga de cache
+                // antes de descubrir los servicios.
+                val cacheRefreshed = try {
+                    val refreshMethod =
+                        gatt.javaClass.getMethod("refresh")
+
+                    val result =
+                        refreshMethod.invoke(gatt)
+
+                    result as? Boolean ?: true
+
+                } catch (e: Exception) {
+                    Log.w(
+                        "BleManager",
+                        "No se pudo refrescar cache GATT: ${e.message}"
+                    )
+                    false
+                }
+
+                Log.d(
+                    "BleManager",
+                    "GATT cache refresh=$cacheRefreshed"
+                )
 
                 // Todavia no mostramos Conectado:
                 // primero deben quedar activas las notificaciones Splatt.
@@ -279,12 +584,15 @@ class BleManager(private val context: Context) {
                 return
             }
 
-            val service = gatt.getService(SERVICE_UUID)
+            val service =
+                gatt.getService(SERVICE_UUID)
+
             val statusChar =
                 service?.getCharacteristic(STATUS_CHAR_UUID)
 
             commandChar =
                 service?.getCharacteristic(COMMAND_CHAR_UUID)
+
             configChar =
                 service?.getCharacteristic(CONFIG_CHAR_UUID)
 
@@ -296,40 +604,46 @@ class BleManager(private val context: Context) {
             ) {
                 handleConnectionLost(
                     gatt,
-                    "servicio o caracteristicas Splatt incompletas"
+                    "servicio Splatt original incompleto"
                 )
                 return
             }
 
-            if (!gatt.setCharacteristicNotification(statusChar, true)) {
+            if (
+                !gatt.setCharacteristicNotification(
+                    statusChar,
+                    true
+                )
+            ) {
                 handleConnectionLost(
                     gatt,
-                    "no se pudo activar notification local"
+                    "no se pudo activar STATUS local"
                 )
                 return
             }
 
-            val descriptor = statusChar.getDescriptor(CCCD_UUID)
+            val descriptor =
+                statusChar.getDescriptor(CCCD_UUID)
 
             if (descriptor == null) {
                 handleConnectionLost(
                     gatt,
-                    "CCCD no disponible"
+                    "CCCD STATUS no disponible"
                 )
                 return
             }
 
             descriptor.value =
-                BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                BluetoothGattDescriptor
+                    .ENABLE_NOTIFICATION_VALUE
 
             if (!gatt.writeDescriptor(descriptor)) {
                 handleConnectionLost(
                     gatt,
-                    "no se pudo escribir CCCD"
+                    "no se pudo escribir CCCD STATUS"
                 )
             }
         }
-
         override fun onDescriptorWrite(
             gatt: BluetoothGatt,
             descriptor: BluetoothGattDescriptor,
@@ -342,46 +656,76 @@ class BleManager(private val context: Context) {
                 return
             }
 
-            if (status == BluetoothGatt.GATT_SUCCESS) {
-                gattReady = true
-                lastStatusReceivedAt = SystemClock.elapsedRealtime()
-                _connectionState.value = true
-
-                Log.d(
-                    "BleManager",
-                    "Splatt BLE listo; watchdog activo."
-                )
-            } else {
+            if (status != BluetoothGatt.GATT_SUCCESS) {
                 handleConnectionLost(
                     gatt,
-                    "fallo activando notificaciones: $status"
+                    "fallo activando STATUS: $status"
                 )
+                return
             }
-        }
 
+            gattReady = true
+
+            lastStatusReceivedAt =
+                SystemClock.elapsedRealtime()
+
+            _connectionState.value = true
+
+            Log.d(
+                "BleManager",
+                "Splatt BLE listo: STATUS; watchdog activo."
+            )
+        }
         override fun onCharacteristicChanged(
             gatt: BluetoothGatt,
             characteristic: BluetoothGattCharacteristic
         ) {
             if (
-                characteristic.uuid == STATUS_CHAR_UUID
-                && bluetoothGatt === gatt
+                bluetoothGatt !== gatt
+                || characteristic.uuid != STATUS_CHAR_UUID
             ) {
-                lastStatusReceivedAt = SystemClock.elapsedRealtime()
+                return
+            }
 
-                // Recibir un estado Splatt demuestra que el enlace
-                // esta realmente operativo.
-                if (gattReady) {
-                    _connectionState.value = true
-                }
+            val payload =
+                characteristic.value ?: return
 
-                val json = String(characteristic.value)
-                try {
-                    val status = parseStatusJson(json)
-                    _statusFlow.value = status
-                } catch (e: Exception) {
-                    Log.e("BleManager", "Error parsing JSON: ${e.message}")
-                }
+            if (payload.isEmpty()) {
+                return
+            }
+
+            val firstByte =
+                payload[0].toInt() and 0xFF
+
+            // Los paquetes TRACE binarios empiezan por 1, 2 o 3.
+            // El STATUS ASCII empieza por '0'...'3'
+            // (bytes 48...51), por lo que no hay ambiguedad.
+            if (firstByte in 1..3) {
+                processTracePacket(payload)
+                return
+            }
+
+            lastStatusReceivedAt =
+                SystemClock.elapsedRealtime()
+
+            if (gattReady) {
+                _connectionState.value = true
+            }
+
+            val text = String(payload)
+
+            try {
+                val statusValue =
+                    parseStatusJson(text)
+
+                _statusFlow.value =
+                    statusValue
+
+            } catch (e: Exception) {
+                Log.e(
+                    "BleManager",
+                    "Error parsing status: ${e.message}"
+                )
             }
         }
     }
@@ -402,7 +746,8 @@ class BleManager(private val context: Context) {
         val text = payload.trim()
 
         // Formato BLE compacto:
-        // estado,x,y,valida,tiempo,host,bateria,shot_x,shot_y
+        // estado,x,y,valida,tiempo,host,bateria,shot_x,shot_y,
+        // frame_ms,shot_ms
         if (!text.startsWith("{")) {
             val fields = text.split(",")
 
@@ -416,6 +761,10 @@ class BleManager(private val context: Context) {
                 val battery = fields.getOrNull(6)?.toIntOrNull() ?: -1
                 val shotX = fields.getOrNull(7)?.toFloatOrNull() ?: x
                 val shotY = fields.getOrNull(8)?.toFloatOrNull() ?: y
+                val frameTimeMs =
+                    fields.getOrNull(9)?.toLongOrNull() ?: 0L
+                val shotTimeMs =
+                    fields.getOrNull(10)?.toLongOrNull() ?: 0L
                 BatteryStatus.update(battery)
 
                 return SplattStatus(
@@ -429,7 +778,9 @@ class BleManager(private val context: Context) {
                     s = 0,
                     c = 1,
                     f = 0,
-                    host = host
+                    host = host,
+                    frameTimeMs = frameTimeMs,
+                    shotTimeMs = shotTimeMs
                 )
             }
         }
@@ -467,7 +818,9 @@ class BleManager(private val context: Context) {
             s = map["s"]?.toIntOrNull() ?: 0,
             c = map["c"]?.toIntOrNull() ?: 0,
             f = map["f"]?.toIntOrNull() ?: 0,
-            host = map["host"] ?: ""
+            host = map["host"] ?: "",
+            frameTimeMs = map["frame_ms"]?.toLongOrNull() ?: 0L,
+            shotTimeMs = map["shot_ms"]?.toLongOrNull() ?: 0L
         )
     }
 }

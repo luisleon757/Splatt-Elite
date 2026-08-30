@@ -76,7 +76,7 @@ class MainActivity : ComponentActivity() {
 fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
     val context = LocalContext.current
     val prefs = context.getSharedPreferences("splatt_prefs", Context.MODE_PRIVATE)
-    
+
     // TTS Manager
     var tts by remember { mutableStateOf<TextToSpeech?>(null) }
     var isTtsReady by remember { mutableStateOf(false) }
@@ -100,25 +100,36 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
             ttsInstance?.shutdown()
         }
     }
-    
+
     // BLE Manager
     val bleManager = remember { BleManager(context) }
-    
+
+    // Cerrar explicitamente la conexion BLE cuando esta
+    // pantalla desaparece. Evita dejar un BluetoothGatt
+    // anterior vivo al cerrar y volver a abrir Splatt.
+    DisposableEffect(bleManager) {
+        onDispose {
+            bleManager.disconnect()
+        }
+    }
+
     // Observers from BLE
     val status by bleManager.statusFlow.collectAsState()
+    val completedTrace by
+        bleManager.completedTraceFlow.collectAsState()
     val isConnected by bleManager.connectionState.collectAsState()
     val isScanning by bleManager.isScanningState.collectAsState()
-    
+
     // Local App State
     var calibX by remember { mutableFloatStateOf(prefs.getFloat("calib_x", 0.0f)) }
     var calibY by remember { mutableFloatStateOf(prefs.getFloat("calib_y", 0.0f)) }
     var distM by remember { mutableFloatStateOf(prefs.getFloat("dist", 10.0f)) }
     // Valores fÃ­sicos fijos (ya no son configurables por UI)
     val lensMm = 25.0f
-    
+
     var localScore by remember { mutableFloatStateOf(0.0f) }
     var isCalibrating by remember { mutableStateOf(false) }
-    
+
     // Zoom and local lists
     var uiZoom by remember { mutableStateOf(1.0f) }
 
@@ -128,8 +139,9 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
 
     val shots = remember { mutableStateListOf<ShotPoint>() }
     val trace = remember { mutableStateListOf<TracePoint>() }
+    var traceShotTimeMs by remember { mutableLongStateOf(0L) }
     val calibShots = remember { mutableStateListOf<Offset>() }
-    
+
     // Dialog control
     var showSettings by remember { mutableStateOf(false) }
     var showStats by remember { mutableStateOf(false) }
@@ -151,6 +163,45 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
         }
     }
 
+    // Cuando ef4 entrega una traza completa y validada,
+    // sustituir de una sola vez toda la traza provisional BLE.
+    LaunchedEffect(completedTrace) {
+        val definitive =
+            completedTrace ?: return@LaunchedEffect
+
+        val boundaryTimeMs = traceShotTimeMs
+
+        if (boundaryTimeMs <= 0L) {
+            android.util.Log.w(
+                "SplattTrace",
+                "Traza definitiva recibida sin instante de disparo"
+            )
+            return@LaunchedEffect
+        }
+
+        val definitivePoints =
+            definitive.points.map { point ->
+                TracePoint(
+                    x = point.x,
+                    y = point.y,
+                    color = Color.Green,
+                    timeMs =
+                        boundaryTimeMs +
+                            point.dtMs.toLong(),
+                    valid = point.valid
+                )
+            }
+
+        trace.clear()
+        trace.addAll(definitivePoints)
+
+        android.util.Log.d(
+            "SplattTrace",
+            "Traza provisional sustituida " +
+                "disparo_id=${definitive.shotId} " +
+                "puntos=${definitivePoints.size}"
+        )
+    }
     // Permissions logic
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -179,7 +230,7 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
 
     // Shot logic (when status changes)
     var lastState by remember { mutableIntStateOf(0) }
-    
+
     LaunchedEffect(status) {
         // El protocolo BLE compacto marca cada impacto al entrar en estado 2.
         // Usar la transición evita perderlo o contarlo más de una vez.
@@ -187,7 +238,7 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
             calibShots.add(Offset(status.shotX, status.shotY))
             Toast.makeText(context, "Disparo de calibraciÃ³n registrado (${calibShots.size})", Toast.LENGTH_SHORT).show()
         }
-        
+
         if (status.state == 2 && lastState != 2) {
             // Usar la posición histórica asociada al disparo por la Raspberry.
             val finalShotX = status.shotX
@@ -197,16 +248,18 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
             val cx = finalShotX - 160.0f - calibX
             val cy = finalShotY - 120.0f - calibY
             val distPixels = kotlin.math.sqrt((cx * cx) + (cy * cy))
-            
+
             val pEff = 0.013f // Modificado de 0.011 a 0.013 para que los disparos se abran un poco mÃ¡s
             val focalLengthPx = lensMm / pEff
             val scaleFactor = (distM * 1000.0f) / focalLengthPx
-            
+
             val calculatedScore = 11.0f - ((distPixels * scaleFactor) / 8.0f)
             localScore = calculatedScore.coerceIn(0.0f, 10.9f)
-            
+
             val shotTime = status.time
-            val shotTraceTime = android.os.SystemClock.elapsedRealtime()
+            val shotTraceTime = status.shotTimeMs
+            traceShotTimeMs = shotTraceTime
+
             val holdTimeWindowMs = 1000L
             val lastSecTrace = trace.filter {
                 val age = shotTraceTime - it.timeMs
@@ -223,14 +276,14 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
             }
             val hold10Pct = if (lastSecTrace.isNotEmpty()) (inside10.toFloat() / lastSecTrace.size) * 100f else 0f
             val hold9Pct = if (lastSecTrace.isNotEmpty()) (inside9.toFloat() / lastSecTrace.size) * 100f else 0f
-            
+
             val newShot = ShotPoint(finalShotX, finalShotY, String.format(Locale.US, "%.1f", localScore), shotTime, hold10Pct, hold9Pct)
             shots.add(newShot)
-            
+
             try {
                 val sessionsDir = java.io.File(context.filesDir, "sessions")
                 if (!sessionsDir.exists()) sessionsDir.mkdirs()
-                
+
                 if (currentSessionFile == null) {
                     val timestamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date())
                     currentSessionFile = java.io.File(sessionsDir, "Splatt_Session_$timestamp.csv")
@@ -238,42 +291,30 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                     writer.append("Numero,X_Raw,Y_Raw,Puntuacion,Tiempo_Apuntado_ms,Parada_10_Pct,Parada_9_Pct\n")
                     writer.close()
                 }
-                
+
                 val writer = java.io.FileWriter(currentSessionFile!!, true)
                 writer.append("${shots.size},${newShot.x},${newShot.y},${newShot.label},${newShot.timeMs},${String.format(java.util.Locale.US, "%.1f", newShot.hold10)},${String.format(java.util.Locale.US, "%.1f", newShot.hold9)}\n")
                 writer.close()
             } catch (e: Exception) {
                 e.printStackTrace()
             }
-            
+
             // TTS Speak
             if (isTtsReady) {
                 val scoreInt = localScore.toInt()
                 val scoreDec = ((localScore * 10).toInt()) % 10
                 val holdInt = hold10Pct.toInt()
-                
+
                 val speechText = "$scoreInt con $scoreDec... parada $holdInt por ciento"
                 tts?.speak(speechText, TextToSpeech.QUEUE_FLUSH, null, null)
             }
-            
-            if (!isCalibrating) {
-                val repaintedTrace = trace.map { pt ->
-                    val timeBeforeShot = shotTraceTime - pt.timeMs
-                    val newColor = when {
-                        timeBeforeShot <= 200 -> Color(0xFF3498DB) // Azul hasta el disparo
-                        timeBeforeShot <= 1000 -> Color(0xFFF1C40F) // Amarillo hasta 0.2s
-                        else -> Color.Green // Verde resto del tiempo
-                    }
-                    pt.copy(color = newColor)
-                }
-                trace.clear()
-                trace.addAll(repaintedTrace)
-            }
+
         }
 
-        // Clear trace only when starting a new shot (entering state 1)
-        if (status.state == 1 && lastState != 1) {
+        // Nueva traza provisional al salir de STANDBY
+        if (status.state != 0 && lastState == 0) {
             trace.clear()
+            traceShotTimeMs = 0L
         }
 
         if (status.state == 1 || status.state == 2) { // Apuntando o Post-Disparo
@@ -283,8 +324,17 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                     status.state == 2 -> Color.Red // post-disparo
                     else -> Color.Green // Verde durante la fase de apuntado
                 }
-                
-                trace.add(TracePoint(status.x, status.y, traceColor, android.os.SystemClock.elapsedRealtime()))
+
+                if (status.frameTimeMs > 0L) {
+                    trace.add(
+                        TracePoint(
+                            status.x,
+                            status.y,
+                            traceColor,
+                            status.frameTimeMs
+                        )
+                    )
+                }
                 // Se incrementa el lÃ­mite a 5000 para no borrar la traza entera
                 if (trace.size > 5000) {
                     trace.removeAt(0)
@@ -294,7 +344,7 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
 
         // Eliminado el reseteo automÃ¡tico de isCalibrating al entrar en standby
         // para permitir que se inicie la calibraciÃ³n con el arma apoyada.
-        
+
         lastState = status.state
     }
 
@@ -333,19 +383,32 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
                             .clip(RoundedCornerShape(8.dp))
-                            .clickable { if (!isConnected && !isScanning) bleManager.startScan() }
                             .padding(4.dp)
                     ) {
                         Box(
                             modifier = Modifier
                                 .size(10.dp)
                                 .clip(RoundedCornerShape(50))
-                                .background(if (isConnected) GreenActive else if (isScanning) Color(0xFFF39C12) else RedActive)
+                                .background(
+                                    if (isConnected) {
+                                        GreenActive
+                                    } else {
+                                        Color(0xFFF39C12)
+                                    }
+                                )
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = if (isConnected) "Conectado (BLE)" else if (isScanning) "Buscando dispositivo..." else "Desconectado (Tocar)",
-                            color = if (isConnected) Color.White else if (isScanning) Color(0xFFF39C12) else RedActive,
+                            text = if (isConnected) {
+                                "Conectado (BLE)"
+                            } else {
+                                "Buscando BLE..."
+                            },
+                            color = if (isConnected) {
+                                Color.White
+                            } else {
+                                Color(0xFFF39C12)
+                            },
                             fontWeight = FontWeight.Bold,
                             fontSize = 16.sp
                         )
@@ -444,7 +507,7 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                             Text("NUEVA SESIÓN", fontSize = 13.sp)
                         }
                     }
-                    
+
                     Box(
                         modifier = Modifier
                             .background(PanelBg.copy(alpha = 0.8f), RoundedCornerShape(8.dp))
@@ -482,6 +545,7 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                     lensMm = lensMm,
                     shots = shots,
                     trace = trace,
+                    shotBoundaryTimeMs = traceShotTimeMs,
                     showTracePunteria = showTracePunteria,
                     showTracePre = showTracePre,
                     showTracePost = showTracePost,

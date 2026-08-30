@@ -20,7 +20,9 @@ data class SplattStatus(
     val s: Int = 0,
     val c: Int = 0,
     val f: Int = 0,
-    val host: String = ""
+    val host: String = "",
+    val frameTimeMs: Long = 0L,
+    val shotTimeMs: Long = 0L
 )
 
 class SplattApiClient(private var baseUrl: String = "http://192.168.4.1") {
@@ -114,7 +116,9 @@ class SplattApiClient(private var baseUrl: String = "http://192.168.4.1") {
             v = map["v"]?.toIntOrNull() ?: 0,
             s = map["s"]?.toIntOrNull() ?: 0,
             c = map["c"]?.toIntOrNull() ?: 0,
-            host = map["host"] ?: ""
+            host = map["host"] ?: "",
+            frameTimeMs = map["frame_ms"]?.toLongOrNull() ?: 0L,
+            shotTimeMs = map["shot_ms"]?.toLongOrNull() ?: 0L
         )
     }
 }

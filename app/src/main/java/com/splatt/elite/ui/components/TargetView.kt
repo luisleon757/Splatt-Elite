@@ -35,7 +35,7 @@ import com.splatt.elite.network.BatteryStatus
 import com.splatt.elite.ui.theme.AccentColor
 
 data class ShotPoint(val x: Float, val y: Float, val label: String, val timeMs: Long = 0L, val hold10: Float = 0f, val hold9: Float = 0f)
-data class TracePoint(val x: Float, val y: Float, val color: Color, val timeMs: Long = 0L)
+data class TracePoint(val x: Float, val y: Float, val color: Color, val timeMs: Long = 0L, val valid: Boolean = true)
 
 val TRACE_PUNTERIA_COLOR = Color(0xFF00D9FF)
 val TRACE_PRE_COLOR = Color(0xFFFFD600)
@@ -55,6 +55,7 @@ fun TargetView(
     lensMm: Float = 25.0f,
     shots: List<ShotPoint> = emptyList(),
     trace: List<TracePoint> = emptyList(),
+    shotBoundaryTimeMs: Long = 0L,
     showTracePunteria: Boolean = true,
     showTracePre: Boolean = true,
     showTracePost: Boolean = true,
@@ -166,21 +167,26 @@ fun TargetView(
                 style = Stroke(width = 1.0f)
             )
 
-            // MainActivity conserva toda la traza hasta el inicio de una nueva punterÃ­a.
-            // El primer punto rojo es la primera muestra POST y marca el lÃ­mite del disparo.
-            val firstPostIndex = trace.indexOfFirst { it.color == Color.Red }
-            val shotBoundaryTime = if (firstPostIndex >= 0) trace[firstPostIndex].timeMs else null
-
+            // Traza y disparo usan CLOCK_BOOTTIME de la Raspberry.
             val punteriaPoints: List<TracePoint>
             val prePoints: List<TracePoint>
             val postPoints: List<TracePoint>
 
-            if (firstPostIndex >= 0 && shotBoundaryTime != null) {
-                val beforeShot = trace.subList(0, firstPostIndex)
-                val preStart = (shotBoundaryTime - 200L).coerceAtLeast(0L)
-                punteriaPoints = beforeShot.filter { it.timeMs < preStart }
-                prePoints = beforeShot.filter { it.timeMs >= preStart }
-                postPoints = trace.subList(firstPostIndex, trace.size)
+            if (shotBoundaryTimeMs > 0L) {
+                val preStart = shotBoundaryTimeMs - 200L
+
+                punteriaPoints = trace.filter {
+                    it.timeMs < preStart
+                }
+
+                prePoints = trace.filter {
+                    it.timeMs >= preStart &&
+                        it.timeMs <= shotBoundaryTimeMs
+                }
+
+                postPoints = trace.filter {
+                    it.timeMs > shotBoundaryTimeMs
+                }
             } else {
                 punteriaPoints = trace
                 prePoints = emptyList()
@@ -212,14 +218,35 @@ fun TargetView(
                 connectFrom: TracePoint? = null
             ) {
                 if (points.isEmpty()) return
-                if (connectFrom != null) {
-                    drawTraceSegment(connectFrom, points.first(), color, strokeWidth)
+
+                // Nunca unir una zona sin deteccion valida.
+                if (
+                    connectFrom != null
+                    && connectFrom.valid
+                    && points.first().valid
+                ) {
+                    drawTraceSegment(
+                        connectFrom,
+                        points.first(),
+                        color,
+                        strokeWidth
+                    )
                 }
+
                 for (i in 0 until points.size - 1) {
-                    drawTraceSegment(points[i], points[i + 1], color, strokeWidth)
+                    val p1 = points[i]
+                    val p2 = points[i + 1]
+
+                    if (p1.valid && p2.valid) {
+                        drawTraceSegment(
+                            p1,
+                            p2,
+                            color,
+                            strokeWidth
+                        )
+                    }
                 }
             }
-
             if (showTracePunteria) {
                 drawTrace(punteriaPoints, TRACE_PUNTERIA_COLOR, 3.5f)
             }

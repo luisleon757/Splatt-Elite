@@ -2,6 +2,7 @@ import importlib.machinery
 import importlib.util
 import json
 import socket
+import struct
 import subprocess
 import threading
 import time
@@ -26,6 +27,30 @@ BLE_SERVICE_UUID = "12345678-1234-5678-1234-56789abcdef0"
 BLE_STATUS_UUID = "12345678-1234-5678-1234-56789abcdef1"
 BLE_COMMAND_UUID = "12345678-1234-5678-1234-56789abcdef2"
 BLE_CONFIG_UUID = "12345678-1234-5678-1234-56789abcdef3"
+
+# Protocolo binario TRACE v1.
+#
+# START:
+#   type=1, version, disparo_id, puntos, bloques
+#
+# DATA:
+#   type=2, disparo_id, bloque, cantidad, puntos...
+#
+# Cada punto:
+#   dt_ms(int16), x*100(int16), y*100(int16), valido(uint8)
+#
+# END:
+#   type=3, disparo_id, puntos, bloques
+TRACE_PROTOCOL_VERSION = 1
+TRACE_MSG_START = 1
+TRACE_MSG_DATA = 2
+TRACE_MSG_END = 3
+
+TRACE_NOTIFY_INTERVAL_MS = 20
+TRACE_PACKET_MAX_BYTES = 180
+
+TRACE_POINT_STRUCT = struct.Struct("<hhhB")
+TRACE_DATA_HEADER_STRUCT = struct.Struct("<BHHB")
 BLE_DEVICE_NAME = "Splatt_Elite"
 BLE_ADVERTISEMENT_INSTANCE = "1"
 BLE_NOTIFY_INTERVAL_MS = 100
@@ -36,6 +61,132 @@ BATTERY_REFRESH_SECONDS = 5.0
 battery_cache_lock = threading.Lock()
 battery_cache_percent = -1
 battery_cache_updated = 0.0
+trace_tx_lock = threading.Lock()
+trace_tx_packets = deque()
+trace_tx_next_shot_id = 0
+
+
+def _trace_int16(value):
+    return max(-32768, min(32767, int(value)))
+
+
+def preparar_trace_ble(puntos, shot_boottime_ns):
+    """Prepara la ultima traza completa para transmitir por BLE."""
+    global trace_tx_next_shot_id
+
+    if not puntos or shot_boottime_ns is None:
+        return
+
+    puntos_codificados = []
+
+    for frame_ns, x, y, valido in puntos:
+        dt_ms = round(
+            (int(frame_ns) - int(shot_boottime_ns))
+            / 1_000_000.0
+        )
+
+        if valido:
+            x_100 = round(float(x) * 100.0)
+            y_100 = round(float(y) * 100.0)
+        else:
+            # Las coordenadas de un punto no valido no se utilizan.
+            x_100 = 0
+            y_100 = 0
+
+        puntos_codificados.append(
+            TRACE_POINT_STRUCT.pack(
+                _trace_int16(dt_ms),
+                _trace_int16(x_100),
+                _trace_int16(y_100),
+                1 if valido else 0,
+            )
+        )
+
+    puntos_por_bloque = max(
+        1,
+        (
+            TRACE_PACKET_MAX_BYTES
+            - TRACE_DATA_HEADER_STRUCT.size
+        ) // TRACE_POINT_STRUCT.size,
+    )
+
+    total_puntos = len(puntos_codificados)
+
+    total_bloques = (
+        total_puntos + puntos_por_bloque - 1
+    ) // puntos_por_bloque
+
+    with trace_tx_lock:
+        trace_tx_next_shot_id = (
+            trace_tx_next_shot_id % 65535
+        ) + 1
+
+        disparo_id = trace_tx_next_shot_id
+
+    paquetes = [
+        struct.pack(
+            "<BBHHH",
+            TRACE_MSG_START,
+            TRACE_PROTOCOL_VERSION,
+            disparo_id,
+            total_puntos,
+            total_bloques,
+        )
+    ]
+
+    for bloque in range(total_bloques):
+        inicio = bloque * puntos_por_bloque
+        fin = min(
+            inicio + puntos_por_bloque,
+            total_puntos,
+        )
+
+        datos = puntos_codificados[inicio:fin]
+
+        paquete = TRACE_DATA_HEADER_STRUCT.pack(
+            TRACE_MSG_DATA,
+            disparo_id,
+            bloque,
+            len(datos),
+        ) + b"".join(datos)
+
+        paquetes.append(paquete)
+
+    paquetes.append(
+        struct.pack(
+            "<BHHH",
+            TRACE_MSG_END,
+            disparo_id,
+            total_puntos,
+            total_bloques,
+        )
+    )
+
+    with trace_tx_lock:
+        # Solo interesa la traza definitiva mas reciente.
+        trace_tx_packets.clear()
+        trace_tx_packets.extend(paquetes)
+
+    bytes_totales = sum(
+        len(paquete)
+        for paquete in paquetes
+    )
+
+    tamano_maximo = max(
+        len(paquete)
+        for paquete in paquetes
+    )
+
+    print(
+        "[TRACE-BLE] preparado "
+        f"disparo_id={disparo_id} "
+        f"puntos={total_puntos} "
+        f"bloques={total_bloques} "
+        f"paquetes={len(paquetes)} "
+        f"bytes={bytes_totales} "
+        f"max_packet={tamano_maximo}",
+        flush=True,
+    )
 
 
 def leer_bateria_pisugar():
@@ -100,6 +251,8 @@ ble_status = {
     "s": 0,
     "c": 1,
     "f": 0,
+    "frame_ms": 0,
+    "shot_ms": 0,
 }
 
 calibration_active = threading.Event()
@@ -175,12 +328,24 @@ class SplattStatusCharacteristic(ble_gatt.Characteristic):
             ["read", "notify"],
             service,
         )
+
         self.notifying = False
-        GLib.timeout_add(BLE_NOTIFY_INTERVAL_MS, self._tick)
+        self.active_shot_id = None
+        self.last_status_notify_monotonic = 0.0
+
+        # Un unico temporizador sirve para STATUS y TRACE.
+        # TRACE necesita una cadencia de 20 ms.
+        GLib.timeout_add(
+            TRACE_NOTIFY_INTERVAL_MS,
+            self._tick,
+        )
 
     @staticmethod
     def _dbus_bytes(data):
-        return dbus.Array([dbus.Byte(value) for value in data], signature="y")
+        return dbus.Array(
+            [dbus.Byte(value) for value in data],
+            signature="y",
+        )
 
     def _payload(self):
         with ble_status_lock:
@@ -192,11 +357,13 @@ class SplattStatusCharacteristic(ble_gatt.Characteristic):
         shot_x = int(round(float(snapshot.get("shot_x", 0))))
         shot_y = int(round(float(snapshot.get("shot_y", 0))))
         valid = int(snapshot.get("v", 0))
+        frame_ms = int(snapshot.get("frame_ms", 0))
+        shot_ms = int(snapshot.get("shot_ms", 0))
         battery = leer_bateria_pisugar()
 
         return (
             f"{state},{x},{y},{valid},0,{LOCAL_IP},{battery},"
-            f"{shot_x},{shot_y}"
+            f"{shot_x},{shot_y},{frame_ms},{shot_ms}"
         ).encode("ascii")
 
     def ReadValue(self, options):
@@ -205,29 +372,129 @@ class SplattStatusCharacteristic(ble_gatt.Characteristic):
     def StartNotify(self):
         if self.notifying:
             return
+
         self.notifying = True
-        print("Notificaciones BLE activadas", flush=True)
-        self._notify()
+
+        print(
+            "Notificaciones BLE STATUS+TRACE activadas",
+            flush=True,
+        )
+
+        self._notify_status()
 
     def StopNotify(self):
         self.notifying = False
-        print("Notificaciones BLE desactivadas", flush=True)
 
-    def _notify(self):
+        print(
+            "Notificaciones BLE STATUS+TRACE desactivadas",
+            flush=True,
+        )
+
+    def _emit(self, data):
+        self.PropertiesChanged(
+            ble_gatt.GATT_CHRC_IFACE,
+            {
+                "Value": self._dbus_bytes(data)
+            },
+            [],
+        )
+
+    def _notify_status(self):
         if not self.notifying:
             return
 
-        value = self._dbus_bytes(self._payload())
-        self.PropertiesChanged(
-            ble_gatt.GATT_CHRC_IFACE,
-            {"Value": value},
-            [],
+        self._emit(self._payload())
+
+        self.last_status_notify_monotonic = (
+            time.monotonic()
         )
+
+    def _notify_trace(self, paquete):
+        try:
+            self._emit(paquete)
+
+        except Exception as error:
+            # Si desaparece la conexion durante una traza,
+            # conservar el paquete para la siguiente conexion.
+            with trace_tx_lock:
+                trace_tx_packets.appendleft(paquete)
+
+            print(
+                f"[TRACE-BLE] error envio por STATUS: {error}",
+                flush=True,
+            )
+
+            return False
+
+        tipo = paquete[0]
+
+        if tipo == TRACE_MSG_START:
+            disparo_id = struct.unpack_from(
+                "<H",
+                paquete,
+                2,
+            )[0]
+
+            self.active_shot_id = disparo_id
+
+            print(
+                "[TRACE-BLE] envio iniciado por STATUS "
+                f"disparo_id={disparo_id}",
+                flush=True,
+            )
+
+        elif tipo == TRACE_MSG_END:
+            disparo_id = struct.unpack_from(
+                "<H",
+                paquete,
+                1,
+            )[0]
+
+            print(
+                "[TRACE-BLE] envio finalizado por STATUS "
+                f"disparo_id={disparo_id}",
+                flush=True,
+            )
+
+            self.active_shot_id = None
+
+        return True
 
     def _tick(self):
         if stop_event.is_set():
             return False
-        self._notify()
+
+        if not self.notifying:
+            return True
+
+        paquete = None
+
+        with trace_tx_lock:
+            if trace_tx_packets:
+                paquete = trace_tx_packets.popleft()
+
+        # Mientras exista TRACE pendiente, darle prioridad.
+        # Un paquete cada 20 ms.
+        if paquete is not None:
+            self._notify_trace(paquete)
+            return True
+
+        # Sin TRACE, mantener STATUS a 100 ms.
+        ahora = time.monotonic()
+
+        if (
+            ahora - self.last_status_notify_monotonic
+            >= BLE_NOTIFY_INTERVAL_MS / 1000.0
+        ):
+            try:
+                self._notify_status()
+
+            except Exception as error:
+                print(
+                    f"[BLE] error STATUS: {error}",
+                    flush=True,
+                )
+
         return True
 
 
@@ -253,8 +520,9 @@ class SplattConfigCharacteristic(SplattTextWriteCharacteristic):
         manejar_config_ble(self._decode(value))
 
 
+
 def ejecutar_comando_sistema(args, obligatorio=False):
-    
+
     result = subprocess.run(
         args,
         text=True,
@@ -464,6 +732,10 @@ MAX_TRACK_ERROR = 55.0
 STREAM_EVERY_N_FRAMES = 4
 JPEG_QUALITY = 65
 TRAIL_LENGTH = 600
+# Traza de alta resolucion de cada disparo.
+# Maximo 30 s antes del disparo y 10 s despues.
+TRACE_PRE_MAX_SECONDS = 30.0
+TRACE_POST_MAX_SECONDS = 10.0
 
 OUTPUT_IMAGE = Path("/home/pi/visor_movimiento_ultimo.jpg")
 LOG_DIR = Path("/home/pi/splatt_logs")
@@ -974,6 +1246,15 @@ def capture_loop():
     # Indica que el disparo actual ya tiene una posición histórica válida.
     shot_position_valid = False
 
+    # Traza completa de alta resolucion del disparo.
+    # Cada elemento:
+    # (SensorTimestamp_ns, x_app, y_app, valido)
+    trace_disparo = deque()
+    trace_disparo_activa = False
+    trace_shot_boottime_ns = None
+    trace_prev_imu_estado = "STANDBY"
+    trace_post_truncated = False
+
     fps = 0.0
     previous_frame_time = time.monotonic()
     tracking_started_at = None
@@ -1030,6 +1311,11 @@ def capture_loop():
                 trail.clear()
                 position_history.clear()
                 pending_shots.clear()
+                trace_disparo.clear()
+                trace_disparo_activa = False
+                trace_shot_boottime_ns = None
+                trace_prev_imu_estado = "STANDBY"
+                trace_post_truncated = False
                 tracking_started_at = None
                 reset_event.clear()
 
@@ -1042,6 +1328,95 @@ def capture_loop():
                 imu_status.get("postura_punteria", False)
             )
 
+            # Traza completa del disparo:
+            # STANDBY -> PUNTERIA -> DISPARO -> POST_DISPARO -> STANDBY
+            if (
+                trace_prev_imu_estado == "STANDBY"
+                and imu_estado == "PUNTERIA"
+            ):
+                trace_disparo.clear()
+                trace_disparo_activa = True
+                trace_shot_boottime_ns = None
+                trace_post_truncated = False
+
+                print("[TRACE] punteria iniciada", flush=True)
+
+            elif (
+                trace_prev_imu_estado != "STANDBY"
+                and imu_estado == "STANDBY"
+                and trace_disparo_activa
+            ):
+                if (
+                    trace_shot_boottime_ns is not None
+                    and trace_disparo
+                ):
+                    first_ns = trace_disparo[0][0]
+                    last_ns = trace_disparo[-1][0]
+
+                    duracion_punteria = max(
+                        0.0,
+                        (trace_shot_boottime_ns - first_ns)
+                        / 1_000_000_000.0,
+                    )
+
+                    duracion_post = max(
+                        0.0,
+                        (last_ns - trace_shot_boottime_ns)
+                        / 1_000_000_000.0,
+                    )
+
+                    validos = sum(
+                        1 for punto in trace_disparo
+                        if punto[3] == 1
+                    )
+
+                    gaps = 0
+                    dentro_gap = False
+
+                    for punto in trace_disparo:
+                        if punto[3] == 0:
+                            if not dentro_gap:
+                                gaps += 1
+                                dentro_gap = True
+                        else:
+                            dentro_gap = False
+
+                    shot_index = -1
+
+                    for indice, punto in enumerate(trace_disparo):
+                        if punto[0] <= trace_shot_boottime_ns:
+                            shot_index = indice
+                        else:
+                            break
+
+                    print(
+                        "[TRACE] disparo finalizado "
+                        f"punteria={duracion_punteria:.3f}s "
+                        f"post={duracion_post:.3f}s "
+                        f"puntos={len(trace_disparo)} "
+                        f"validos={validos} "
+                        f"gaps={gaps} "
+                        f"shot_index={shot_index} "
+                        f"post_limitado={int(trace_post_truncated)}",
+                        flush=True,
+                    )
+                    preparar_trace_ble(
+                        list(trace_disparo),
+                        trace_shot_boottime_ns,
+                    )
+
+                else:
+                    print(
+                        "[TRACE] punteria descartada sin disparo",
+                        flush=True,
+                    )
+
+                trace_disparo_activa = False
+                trace_disparo.clear()
+                trace_shot_boottime_ns = None
+                trace_post_truncated = False
+
+            trace_prev_imu_estado = imu_estado
             camera_needed = (
                 calibration_active.is_set()
                 or visor_activo()
@@ -1094,6 +1469,8 @@ def capture_loop():
                     s=0,
                     c=1,
                     f=0,
+                    frame_ms=0,
+                    shot_ms=0,
                 )
                 time.sleep(0.05)
                 continue
@@ -1139,6 +1516,12 @@ def capture_loop():
             # en CLOCK_BOOTTIME, el mismo reloj usado ahora por la IMU.
             frame_boottime_ns = frame_metadata.get(
                 "SensorTimestamp"
+            )
+
+            frame_time_ms = (
+                int(frame_boottime_ns // 1_000_000)
+                if frame_boottime_ns is not None
+                else 0
             )
 
             now = time.monotonic()
@@ -1527,6 +1910,49 @@ def capture_loop():
                 app_x = 0
                 app_y = 0
 
+            # Guardar cada frame real mientras esta activo el disparo.
+            if (
+                trace_disparo_activa
+                and frame_boottime_ns is not None
+            ):
+                guardar_trace = True
+
+                if trace_shot_boottime_ns is not None:
+                    limite_post_ns = (
+                        trace_shot_boottime_ns
+                        + int(
+                            TRACE_POST_MAX_SECONDS
+                            * 1_000_000_000
+                        )
+                    )
+
+                    if frame_boottime_ns > limite_post_ns:
+                        guardar_trace = False
+                        trace_post_truncated = True
+
+                if guardar_trace:
+                    trace_disparo.append((
+                        int(frame_boottime_ns),
+                        float(app_x),
+                        float(app_y),
+                        1 if detection is not None else 0,
+                    ))
+
+                    # Antes de T se conservan solo los ultimos 30 s.
+                    if trace_shot_boottime_ns is None:
+                        limite_pre_ns = (
+                            int(frame_boottime_ns)
+                            - int(
+                                TRACE_PRE_MAX_SECONDS
+                                * 1_000_000_000
+                            )
+                        )
+
+                        while (
+                            trace_disparo
+                            and trace_disparo[0][0] < limite_pre_ns
+                        ):
+                            trace_disparo.popleft()
             # Estados Android:
             # 0 = STANDBY
             # 1 = APUNTANDO
@@ -1534,7 +1960,11 @@ def capture_loop():
             # 3 = ENFOQUE
             if imu_estado == "STANDBY":
                 shot_position_valid = False
-                actualizar_ble_status(shot_x=0, shot_y=0)
+                actualizar_ble_status(
+                    shot_x=0,
+                    shot_y=0,
+                    shot_ms=0,
+                )
                 app_state = 0
             elif imu_estado == "POST_DISPARO":
                 # No anunciar RESULTADO a Android hasta que la posición
@@ -1549,7 +1979,11 @@ def capture_loop():
                 # Al terminar POST_DISPARO, borrar la posición del disparo
                 # anterior para que nunca pueda reutilizarse en el siguiente.
                 shot_position_valid = False
-                actualizar_ble_status(shot_x=0, shot_y=0)
+                actualizar_ble_status(
+                    shot_x=0,
+                    shot_y=0,
+                    shot_ms=0,
+                )
                 app_state = 1 if camera_ok else 3
 
             # Recoger eventos IMU sin asociarlos todavía.
@@ -1560,6 +1994,20 @@ def capture_loop():
                     break
 
                 pending_shots.append(shot_event)
+                if (
+                    trace_disparo_activa
+                    and trace_shot_boottime_ns is None
+                    and shot_event.get("boottime_ns") is not None
+                ):
+                    trace_shot_boottime_ns = int(
+                        shot_event["boottime_ns"]
+                    )
+
+                    print(
+                        "[TRACE] disparo detectado "
+                        f"T={trace_shot_boottime_ns}",
+                        flush=True,
+                    )
 
             # Asociar solamente cuando la cámara ya haya cruzado
             # temporalmente el instante físico del disparo.
@@ -1680,6 +2128,9 @@ def capture_loop():
                         actualizar_ble_status(
                             shot_x=shot_position["x"],
                             shot_y=shot_position["y"],
+                            shot_ms=int(
+                                shot_event["boottime_ns"] // 1_000_000
+                            ),
                         )
 
                         sensor_text = (
@@ -1721,6 +2172,7 @@ def capture_loop():
                 ),
                 x=app_x,
                 y=app_y,
+                frame_ms=frame_time_ms,
                 v=1 if (camera_ok and detection is not None) else 0,
                 s=0,
                 c=1,
