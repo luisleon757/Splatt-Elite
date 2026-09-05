@@ -354,8 +354,8 @@ class SplattStatusCharacteristic(ble_gatt.Characteristic):
         state = int(snapshot.get("state", 0))
         x = int(round(float(snapshot.get("x", 0))))
         y = int(round(float(snapshot.get("y", 0))))
-        shot_x = int(round(float(snapshot.get("shot_x", 0))))
-        shot_y = int(round(float(snapshot.get("shot_y", 0))))
+        shot_x = float(snapshot.get("shot_x", 0))
+        shot_y = float(snapshot.get("shot_y", 0))
         valid = int(snapshot.get("v", 0))
         frame_ms = int(snapshot.get("frame_ms", 0))
         shot_ms = int(snapshot.get("shot_ms", 0))
@@ -363,7 +363,7 @@ class SplattStatusCharacteristic(ble_gatt.Characteristic):
 
         return (
             f"{state},{x},{y},{valid},0,{LOCAL_IP},{battery},"
-            f"{shot_x},{shot_y},{frame_ms},{shot_ms}"
+            f"{shot_x:.2f},{shot_y:.2f},{frame_ms},{shot_ms}"
         ).encode("ascii")
 
     def ReadValue(self, options):
@@ -727,6 +727,10 @@ CONFIRM_FRAMES = 3
 MAX_LOST_FRAMES = 5
 MAX_CONFIRM_JUMP = 18.0
 MAX_TRACK_ERROR = 55.0
+
+# Retardo estimado entre deteccion IMU y salida del balin.
+SHOT_EXIT_DELAY_MS = 3.0
+SHOT_EXIT_DELAY_NS = int(SHOT_EXIT_DELAY_MS * 1_000_000)
 
 # Visor
 STREAM_EVERY_N_FRAMES = 4
@@ -1999,8 +2003,9 @@ def capture_loop():
                     and trace_shot_boottime_ns is None
                     and shot_event.get("boottime_ns") is not None
                 ):
-                    trace_shot_boottime_ns = int(
-                        shot_event["boottime_ns"]
+                    trace_shot_boottime_ns = (
+                        int(shot_event["boottime_ns"])
+                        + SHOT_EXIT_DELAY_NS
                     )
 
                     print(
@@ -2014,15 +2019,30 @@ def capture_loop():
             while pending_shots:
                 shot_event = pending_shots[0]
 
-                if (
-                    shot_event.get("boottime_ns") is not None
-                    and frame_boottime_ns is not None
-                    and frame_boottime_ns
-                    <= shot_event["boottime_ns"]
-                ):
+                shot_boottime_ns = shot_event.get("boottime_ns")
+
+                if shot_boottime_ns is None:
+                    pending_shots.popleft()
+                    print(
+                        f"[CAMARA] DISPARO {shot_event['numero']} "
+                        "sin timestamp IMU",
+                        flush=True,
+                    )
+                    continue
+
+                if frame_boottime_ns is None:
                     break
 
-                pending_shots.popleft()
+                # Instante estimado en el que el balin sale de la boca.
+                target_boottime_ns = (
+                    int(shot_boottime_ns)
+                    + SHOT_EXIT_DELAY_NS
+                )
+
+                # Esperar hasta que la camara haya capturado
+                # al menos un frame posterior a T_salida.
+                if int(frame_boottime_ns) <= target_boottime_ns:
+                    break
 
                 posiciones_validas = [
                     posicion
@@ -2030,139 +2050,134 @@ def capture_loop():
                     if (
                         posicion["valid"] == 1
                         and posicion.get("boottime_ns") is not None
-                        and shot_event.get("boottime_ns") is not None
-                        and posicion["boottime_ns"]
-                        <= shot_event["boottime_ns"]
                     )
                 ]
 
-                frames_anteriores = [
+                anteriores = [
                     posicion
-                    for posicion in position_history
-                    if (
-                        posicion.get("boottime_ns") is not None
-                        and shot_event.get("boottime_ns") is not None
-                        and posicion["boottime_ns"]
-                        <= shot_event["boottime_ns"]
-                    )
+                    for posicion in posiciones_validas
+                    if int(posicion["boottime_ns"])
+                    <= target_boottime_ns
                 ]
 
-                frame_previo = (
-                    frames_anteriores[-1]
-                    if frames_anteriores
-                    else None
-                )
+                posteriores = [
+                    posicion
+                    for posicion in posiciones_validas
+                    if int(posicion["boottime_ns"])
+                    >= target_boottime_ns
+                ]
 
-                if posiciones_validas:
-                    shot_position = posiciones_validas[-1]
-                    age_ms = (
-                        shot_event["monotonic"]
-                        - shot_position["monotonic"]
-                    ) * 1000.0
+                if not anteriores:
+                    pending_shots.popleft()
 
-                    sensor_delta_ms = None
-                    frame_delta_ms = None
-                    detection_gap_ms = None
-
-                    if (
-                        shot_event.get("boottime_ns") is not None
-                        and shot_position.get("boottime_ns") is not None
-                    ):
-                        sensor_delta_ms = (
-                            shot_event["boottime_ns"]
-                            - shot_position["boottime_ns"]
-                        ) / 1_000_000.0
-
-                    if (
-                        frame_previo is not None
-                        and shot_event.get("boottime_ns") is not None
-                    ):
-                        frame_delta_ms = (
-                            shot_event["boottime_ns"]
-                            - frame_previo["boottime_ns"]
-                        ) / 1_000_000.0
-
-                    if (
-                        sensor_delta_ms is not None
-                        and frame_delta_ms is not None
-                    ):
-                        detection_gap_ms = (
-                            sensor_delta_ms - frame_delta_ms
-                        )
-
-                    frame_text = (
-                        f"{frame_delta_ms:.3f} ms"
-                        if frame_delta_ms is not None
-                        else "no disponible"
-                    )
-                    posicion_text = (
-                        f"{sensor_delta_ms:.3f} ms"
-                        if sensor_delta_ms is not None
-                        else "no disponible"
-                    )
-                    gap_text = (
-                        f"{detection_gap_ms:.3f} ms"
-                        if detection_gap_ms is not None
-                        else "no disponible"
-                    )
-                    frame_valid_text = (
-                        str(frame_previo.get("valid", 0))
-                        if frame_previo is not None
-                        else "N/A"
-                    )
-
-                    print(
-                        f"[CAMARA-TIMING] DISPARO "
-                        f"{shot_event['numero']} "
-                        f"frame_previo={frame_text} "
-                        f"frame_valid={frame_valid_text} "
-                        f"posicion_valida={posicion_text} "
-                        f"gap_deteccion={gap_text}",
-                        flush=True,
-                    )
-
-                    if age_ms <= 150.0:
-                        shot_position_valid = True
-                        app_state = 2
-
-                        actualizar_ble_status(
-                            shot_x=shot_position["x"],
-                            shot_y=shot_position["y"],
-                            shot_ms=int(
-                                shot_event["boottime_ns"] // 1_000_000
-                            ),
-                        )
-
-                        sensor_text = (
-                            f"{sensor_delta_ms:.3f} ms"
-                            if sensor_delta_ms is not None
-                            else "no disponible"
-                        )
-
-                        print(
-                            f"[CAMARA] DISPARO {shot_event['numero']} "
-                            f"asociado X={shot_position['x']:.1f} "
-                            f"Y={shot_position['y']:.1f} "
-                            f"antigüedad_python={age_ms:.1f} ms "
-                            f"delta_sensor={sensor_text}",
-                            flush=True,
-                        )
-                    else:
-                        print(
-                            f"[CAMARA] DISPARO {shot_event['numero']} "
-                            f"descartado: posición demasiado antigua "
-                            f"({age_ms:.1f} ms)",
-                            flush=True,
-                        )
-                else:
                     print(
                         f"[CAMARA] DISPARO {shot_event['numero']} "
-                        "sin posición válida anterior",
+                        "sin posicion valida anterior a T_salida",
                         flush=True,
                     )
+                    continue
 
-            # Publicar BLE después de asociar el disparo.
-            # shot_x/shot_y permanecen con la última posición histórica válida.
+                # Si el frame que acaba de llegar no fue valido,
+                # esperar hasta 150 ms a una deteccion valida posterior.
+                if not posteriores:
+                    espera_post_ms = (
+                        int(frame_boottime_ns)
+                        - target_boottime_ns
+                    ) / 1_000_000.0
+
+                    if espera_post_ms <= 150.0:
+                        break
+
+                    pending_shots.popleft()
+
+                    print(
+                        f"[CAMARA] DISPARO {shot_event['numero']} "
+                        "sin posicion valida posterior a T_salida "
+                        f"tras {espera_post_ms:.1f} ms",
+                        flush=True,
+                    )
+                    continue
+
+                posicion_1 = anteriores[-1]
+                posicion_2 = posteriores[0]
+
+                t1 = int(posicion_1["boottime_ns"])
+                t2 = int(posicion_2["boottime_ns"])
+
+                dt_pre_ms = (
+                    target_boottime_ns - t1
+                ) / 1_000_000.0
+
+                dt_post_ms = (
+                    t2 - target_boottime_ns
+                ) / 1_000_000.0
+
+                if (
+                    dt_pre_ms > 150.0
+                    or dt_post_ms > 150.0
+                ):
+                    pending_shots.popleft()
+
+                    print(
+                        f"[CAMARA] DISPARO {shot_event['numero']} "
+                        "descartado: interpolacion demasiado lejana "
+                        f"pre={dt_pre_ms:.1f}ms "
+                        f"post={dt_post_ms:.1f}ms",
+                        flush=True,
+                    )
+                    continue
+
+                if t2 == t1:
+                    alpha = 0.0
+                else:
+                    alpha = (
+                        target_boottime_ns - t1
+                    ) / float(t2 - t1)
+
+                alpha = max(0.0, min(1.0, alpha))
+
+                x1 = float(posicion_1["x"])
+                y1 = float(posicion_1["y"])
+                x2 = float(posicion_2["x"])
+                y2 = float(posicion_2["y"])
+
+                x_interp = x1 + alpha * (x2 - x1)
+                y_interp = y1 + alpha * (y2 - y1)
+
+                pending_shots.popleft()
+
+                shot_position_valid = True
+                app_state = 2
+
+                actualizar_ble_status(
+                    shot_x=x_interp,
+                    shot_y=y_interp,
+                    shot_ms=int(
+                        target_boottime_ns // 1_000_000
+                    ),
+                )
+
+                print(
+                    f"[CAMARA-TIMING] DISPARO "
+                    f"{shot_event['numero']} "
+                    f"T_salida=IMU+{SHOT_EXIT_DELAY_MS:.3f}ms "
+                    f"dt1=-{dt_pre_ms:.3f}ms "
+                    f"dt2=+{dt_post_ms:.3f}ms "
+                    f"alpha={alpha:.6f} "
+                    f"P1=({x1:.3f},{y1:.3f}) "
+                    f"P2=({x2:.3f},{y2:.3f}) "
+                    f"Pinterp=({x_interp:.3f},{y_interp:.3f})",
+                    flush=True,
+                )
+
+                print(
+                    f"[CAMARA] DISPARO {shot_event['numero']} "
+                    f"interpolado X={x_interp:.3f} "
+                    f"Y={y_interp:.3f}",
+                    flush=True,
+                )
+
+            # Publicar BLE despues de asociar el disparo.
             actualizar_ble_status(
                 state=app_state,
                 time=(
