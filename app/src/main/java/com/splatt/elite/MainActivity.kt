@@ -128,7 +128,7 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
     val lensMm = 25.0f
 
     var localScore by remember { mutableFloatStateOf(0.0f) }
-    var isCalibrating by remember { mutableStateOf(false) }
+    var isZeroAdjusting by remember { mutableStateOf(false) }
 
     // Zoom and local lists
     var uiZoom by remember { mutableStateOf(1.0f) }
@@ -234,11 +234,6 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
     LaunchedEffect(status) {
         // El protocolo BLE compacto marca cada impacto al entrar en estado 2.
         // Usar la transición evita perderlo o contarlo más de una vez.
-        if (isCalibrating && status.state == 2 && lastState != 2) {
-            calibShots.add(Offset(status.shotX, status.shotY))
-            Toast.makeText(context, "Disparo de calibraciÃ³n registrado (${calibShots.size})", Toast.LENGTH_SHORT).show()
-        }
-
         if (status.state == 2 && lastState != 2) {
             // Usar la posición histórica asociada al disparo por la Raspberry.
             val finalShotX = status.shotX
@@ -320,7 +315,6 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
         if (status.state == 1 || status.state == 2) { // Apuntando o Post-Disparo
             if (status.v > 0) {
                 val traceColor = when {
-                    isCalibrating -> Color.Green
                     status.state == 2 -> Color.Red // post-disparo
                     else -> Color.Green // Verde durante la fase de apuntado
                 }
@@ -342,8 +336,6 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
             }
         }
 
-        // Eliminado el reseteo automÃ¡tico de isCalibrating al entrar en standby
-        // para permitir que se inicie la calibraciÃ³n con el arma apoyada.
 
         lastState = status.state
     }
@@ -566,10 +558,10 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                 verticalAlignment = Alignment.Bottom
             ) {
                 CalibrationDPad(
-                    onMoveUp = { calibY -= 0.5f; prefs.edit().putFloat("calib_y", calibY).apply() },
-                    onMoveDown = { calibY += 0.5f; prefs.edit().putFloat("calib_y", calibY).apply() },
-                    onMoveLeft = { calibX -= 0.5f; prefs.edit().putFloat("calib_x", calibX).apply() },
-                    onMoveRight = { calibX += 0.5f; prefs.edit().putFloat("calib_x", calibX).apply() }
+                    onMoveUp = { if (isZeroAdjusting) calibY -= 0.25f },
+                    onMoveDown = { if (isZeroAdjusting) calibY += 0.25f },
+                    onMoveLeft = { if (isZeroAdjusting) calibX -= 0.25f },
+                    onMoveRight = { if (isZeroAdjusting) calibX += 0.25f }
                 )
 
                 Column(
@@ -614,7 +606,7 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                                     modifier = Modifier.size(buttonSize),
                                     shape = RoundedCornerShape(10.dp),
                                     enabled = isConnected &&
-                                        !isCalibrating &&
+                                        !isZeroAdjusting &&
                                         status.state != 3,
                                     contentPadding = PaddingValues(3.dp)
                                 ) {
@@ -633,46 +625,23 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
 
                                 Button(
                                     onClick = {
-                                        if (!isCalibrating) {
-                                            isCalibrating = true
-                                            calibShots.clear()
-                                            Toast.makeText(
-                                                context,
-                                                "Centrado iniciado. Realiza varios disparos",
-                                                Toast.LENGTH_LONG
-                                            ).show()
-                                        } else {
-                                            isCalibrating = false
+                                        isZeroAdjusting = !isZeroAdjusting
 
-                                            if (calibShots.isNotEmpty()) {
-                                                val avgX =
-                                                    calibShots.map { it.x }.average().toFloat()
-                                                val avgY =
-                                                    calibShots.map { it.y }.average().toFloat()
-
-                                                calibX = avgX - 160.0f
-                                                calibY = avgY - 120.0f
-
-                                                prefs.edit()
-                                                    .putFloat("calib_x", calibX)
-                                                    .putFloat("calib_y", calibY)
-                                                    .apply()
-
-                                                Toast.makeText(
-                                                    context,
-                                                    "Centrado aplicado con ${calibShots.size} disparos",
-                                                    Toast.LENGTH_LONG
-                                                ).show()
-
-                                                calibShots.clear()
-                                            } else {
-                                                Toast.makeText(
-                                                    context,
-                                                    "Centrado cancelado: no se registraron disparos",
-                                                    Toast.LENGTH_LONG
-                                                ).show()
-                                            }
+                                        if (!isZeroAdjusting) {
+                                            prefs.edit()
+                                                .putFloat("calib_x", calibX)
+                                                .putFloat("calib_y", calibY)
+                                                .apply()
                                         }
+
+                                        Toast.makeText(
+                                            context,
+                                            if (isZeroAdjusting)
+                                                "Ajusta el ultimo impacto con las flechas"
+                                            else
+                                                "Cero manual guardado",
+                                            Toast.LENGTH_LONG
+                                        ).show()
                                     },
                                     colors = ButtonDefaults.buttonColors(
                                         containerColor = Color(0xFF6C5CE7),
@@ -684,10 +653,10 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                                     contentPadding = PaddingValues(3.dp)
                                 ) {
                                     Text(
-                                        text = if (isCalibrating)
-                                            "APLICAR\n(${calibShots.size})"
+                                        text = if (isZeroAdjusting)
+                                            "GUARDAR\nCERO"
                                         else
-                                            "CENTRAR\nIMPACTOS",
+                                            "AJUSTAR\nCERO",
                                         fontSize = 10.sp,
                                         lineHeight = 11.sp,
                                         fontWeight = FontWeight.Bold,
