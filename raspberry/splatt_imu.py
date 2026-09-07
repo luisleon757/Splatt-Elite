@@ -347,6 +347,36 @@ class SplattIMU:
             sample_boottime_ns,
         )
 
+        # Auditoría temporal: no cambia ninguna decisión del detector.
+        # Registra cada candidato confirmado antes de que la lógica de
+        # postura decida si se acepta o se ignora.
+        if disparo_detectado is not None:
+            evento_boottime_ns = int(disparo_detectado[2])
+            retraso_inicio_ms = (
+                int(sample_boottime_ns) - evento_boottime_ns
+            ) / 1_000_000.0
+            decision = (
+                "ACEPTADO"
+                if (
+                    self.estado == "PUNTERIA"
+                    and horizontal_mantenimiento
+                )
+                else "RECHAZADO_POSTURA"
+            )
+
+            print(
+                f"[IMU-AUDIT] t={t:.6f}s "
+                f"boot_inicio={evento_boottime_ns} "
+                f"boot_muestra={int(sample_boottime_ns)} "
+                f"dt_inicio={retraso_inicio_ms:.3f}ms "
+                f"angulo={angulo_horizontal:.3f}deg "
+                f"horizontal={int(horizontal_mantenimiento)} "
+                f"decision={decision} "
+                f"V={float(disparo_detectado[0]):.4f}g "
+                f"J={float(disparo_detectado[1]):.4f}g",
+                flush=True,
+            )
+
         if self.estado == "STANDBY":
             if horizontal_entrada:
                 if self.horizontal_desde is None:
