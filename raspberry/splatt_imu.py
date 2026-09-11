@@ -347,9 +347,9 @@ class SplattIMU:
             sample_boottime_ns,
         )
 
-        # Auditoría temporal: no cambia ninguna decisión del detector.
-        # Registra cada candidato confirmado antes de que la lógica de
-        # postura decida si se acepta o se ignora.
+        # Auditoría temporal. Un disparo confirmado mientras ya
+        # estamos en PUNTERIA se acepta aunque la aceleración instantánea
+        # del propio retroceso haga que el ángulo supere el umbral.
         if disparo_detectado is not None:
             evento_boottime_ns = int(disparo_detectado[2])
             retraso_inicio_ms = (
@@ -357,11 +357,8 @@ class SplattIMU:
             ) / 1_000_000.0
             decision = (
                 "ACEPTADO"
-                if (
-                    self.estado == "PUNTERIA"
-                    and horizontal_mantenimiento
-                )
-                else "RECHAZADO_POSTURA"
+                if self.estado == "PUNTERIA"
+                else "IGNORADO_ESTADO"
             )
 
             print(
@@ -390,7 +387,24 @@ class SplattIMU:
                 self.horizontal_desde = None
 
         elif self.estado == "PUNTERIA":
-            if not horizontal_mantenimiento:
+            # Si el detector confirma un disparo, el disparo tiene prioridad
+            # sobre la postura instantánea. El retroceso puede alterar ax/ay/az
+            # y hacer que el ángulo parezca fuera de horizontal durante unos ms.
+            if disparo_detectado is not None:
+                (
+                    disparo_v,
+                    disparo_j,
+                    disparo_boottime_ns,
+                ) = disparo_detectado
+
+                self._registrar_disparo(
+                    t,
+                    disparo_v,
+                    disparo_j,
+                    disparo_boottime_ns,
+                )
+
+            elif not horizontal_mantenimiento:
                 if self.fuera_horizontal_desde is None:
                     self.fuera_horizontal_desde = t
                 elif (
@@ -400,20 +414,6 @@ class SplattIMU:
                     self._cambiar_estado("STANDBY", t)
             else:
                 self.fuera_horizontal_desde = None
-
-                if disparo_detectado is not None:
-                    (
-                        disparo_v,
-                        disparo_j,
-                        disparo_boottime_ns,
-                    ) = disparo_detectado
-
-                    self._registrar_disparo(
-                        t,
-                        disparo_v,
-                        disparo_j,
-                        disparo_boottime_ns,
-                    )
 
         elif self.estado == "POST_DISPARO":
             if not horizontal_mantenimiento:
