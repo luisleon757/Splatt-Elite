@@ -728,8 +728,10 @@ MAX_LOST_FRAMES = 5
 MAX_CONFIRM_JUMP = 18.0
 MAX_TRACK_ERROR = 55.0
 
-# Retardo estimado entre deteccion IMU y salida del balin.
-SHOT_EXIT_DELAY_MS = 3.0
+# Retardo provisional entre la referencia IMU y la salida del balin.
+# Tras corregir la aceptación del primer disparo confirmado, partimos de 0 ms
+# para volver a medir el retardo físico sin compensar un sesgo anterior.
+SHOT_EXIT_DELAY_MS = 0.0
 SHOT_EXIT_DELAY_NS = int(SHOT_EXIT_DELAY_MS * 1_000_000)
 
 # Visor
