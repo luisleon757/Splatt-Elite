@@ -1592,22 +1592,22 @@ def capture_loop():
             request = camera.capture_request()
             perf_after_capture = time.perf_counter()
 
-            try:
-                frame_metadata = request.get_metadata()
+            frame_metadata = request.get_metadata()
 
-                # YUV420 contiene luminancia + crominancia. Para detectar
-                # la diana solo necesitamos el plano Y. MappedArray evita
-                # copiar todo el buffer YUV; copiamos unicamente 1280x800 Y.
-                with MappedArray(request, "main", write=False) as mapped:
-                    gray = np.copy(mapped.array[:HEIGHT, :WIDTH])
-            finally:
-                request.release()
+            # Trabajar directamente sobre el plano Y mapeado evita copiar
+            # 1280x800 bytes en cada frame. El request se libera justo
+            # despues del detector. Solo copiamos la imagen si hay visor.
+            mapped = MappedArray(request, "main", write=False)
+            mapped.__enter__()
+            gray = mapped.array[:HEIGHT, :WIDTH]
 
             perf_after_copy = time.perf_counter()
 
             perf_capture_wait_ms = (
                 perf_after_capture - perf_capture_start
             ) * 1000.0
+            # Se conserva el nombre "copia" en el log para comparar con
+            # las pruebas anteriores; ahora mide solo acceso/mapeo.
             perf_copy_ms = (
                 perf_after_copy - perf_after_capture
             ) * 1000.0
@@ -1976,6 +1976,13 @@ def capture_loop():
                             )
                         )
 
+
+            # Fuera del detector ya no necesitamos mantener
+            # mapeado el buffer de camara. Para el visor web, que no se usa
+            # durante la medicion normal, conservamos una copia independiente.
+            gray_overlay = np.copy(gray) if visor_activo() else None
+            mapped.__exit__(None, None, None)
+            request.release()
 
             perf_after_detector = time.perf_counter()
             perf_logic_ms = max(
@@ -2357,7 +2364,10 @@ def capture_loop():
             if frame_counter % STREAM_EVERY_N_FRAMES != 0:
                 continue
 
-            overlay = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+            overlay = cv2.cvtColor(
+                gray_overlay,
+                cv2.COLOR_GRAY2BGR,
+            )
 
             # Centro óptico de la cámara.
             cv2.drawMarker(
