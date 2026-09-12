@@ -1192,6 +1192,10 @@ def capture_loop():
             "size": (WIDTH, HEIGHT),
             "format": "YUV420",
         },
+        sensor={
+            "output_size": (WIDTH, HEIGHT),
+            "bit_depth": 8,
+        },
         controls={
             "FrameRate": CAMERA_FPS,
         },
