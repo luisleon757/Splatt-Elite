@@ -1980,15 +1980,31 @@ def capture_loop():
             # Fuera del detector ya no necesitamos mantener
             # mapeado el buffer de camara. Para el visor web, que no se usa
             # durante la medicion normal, conservamos una copia independiente.
+            perf_release_start = time.perf_counter()
             gray_overlay = np.copy(gray) if visor_activo() else None
-            mapped.__exit__(None, None, None)
-            request.release()
+            perf_after_overlay_copy = time.perf_counter()
 
-            perf_after_detector = time.perf_counter()
+            mapped.__exit__(None, None, None)
+            perf_after_unmap = time.perf_counter()
+
+            request.release()
+            perf_after_release = time.perf_counter()
+
+            perf_overlay_copy_ms = (
+                perf_after_overlay_copy - perf_release_start
+            ) * 1000.0
+            perf_unmap_ms = (
+                perf_after_unmap - perf_after_overlay_copy
+            ) * 1000.0
+            perf_request_release_ms = (
+                perf_after_release - perf_after_unmap
+            ) * 1000.0
+
+            perf_after_detector = perf_after_release
             perf_logic_ms = max(
                 0.0,
                 (
-                    perf_after_detector - perf_after_copy
+                    perf_release_start - perf_after_copy
                 ) * 1000.0 - perf_detector_ms,
             )
             perf_prev_after_detector = perf_after_detector
@@ -2005,6 +2021,9 @@ def capture_loop():
                     f"eval={detector_perf_last['eval_ms']:.2f}ms "
                     f"ncirc={detector_perf_last['circles']} "
                     f"logica={perf_logic_ms:.2f}ms "
+                    f"overlay={perf_overlay_copy_ms:.2f}ms "
+                    f"unmap={perf_unmap_ms:.2f}ms "
+                    f"release={perf_request_release_ms:.2f}ms "
                     f"cola_prev={perf_tail_prev_ms:.2f}ms "
                     f"estado={state}",
                     flush=True,
