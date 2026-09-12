@@ -1267,6 +1267,7 @@ def capture_loop():
 
     fps = 0.0
     previous_frame_time = time.monotonic()
+    perf_prev_after_detector = None
     tracking_started_at = None
 
     last_search_mode = None
@@ -1512,13 +1513,30 @@ def capture_loop():
 
                 calibration_active.clear()
 
+            perf_capture_start = time.perf_counter()
+            perf_tail_prev_ms = (
+                (perf_capture_start - perf_prev_after_detector) * 1000.0
+                if perf_prev_after_detector is not None
+                else 0.0
+            )
+
             request = camera.capture_request()
+            perf_after_capture = time.perf_counter()
 
             try:
                 frame_metadata = request.get_metadata()
                 frame = request.make_array("main")
             finally:
                 request.release()
+
+            perf_after_copy = time.perf_counter()
+
+            perf_capture_wait_ms = (
+                perf_after_capture - perf_capture_start
+            ) * 1000.0
+            perf_copy_ms = (
+                perf_after_copy - perf_after_capture
+            ) * 1000.0
 
             gray = frame[:HEIGHT, :WIDTH]
 
@@ -1551,6 +1569,7 @@ def capture_loop():
             detection = None
             search_rectangle = None
             track_rectangle = None
+            perf_detector_ms = 0.0
 
             if imu_estado == "STANDBY":
                 state = "SEARCH"
@@ -1658,6 +1677,7 @@ def capture_loop():
                         int(y2),
                     )
 
+                    perf_detector_start = time.perf_counter()
                     detection = buscar_circulo(
                         gray,
                         x1,
@@ -1666,6 +1686,9 @@ def capture_loop():
                         y2,
                         reference_global=search_reference,
                     )
+                    perf_detector_ms = (
+                        time.perf_counter() - perf_detector_start
+                    ) * 1000.0
 
                     # El contador avanza mientras sigamos en SEARCH.
                     # Un candidato aislado ya no reinicia la escalada.
@@ -1763,6 +1786,7 @@ def capture_loop():
                         current_radius,
                     )
 
+                    perf_detector_start = time.perf_counter()
                     detection = buscar_circulo(
                         gray,
                         predicted_x - half,
@@ -1771,6 +1795,9 @@ def capture_loop():
                         predicted_y + half,
                         reference_global=predicted_reference,
                     )
+                    perf_detector_ms = (
+                        time.perf_counter() - perf_detector_start
+                    ) * 1000.0
 
                     track_fail_reason = None
 
@@ -1876,6 +1903,28 @@ def capture_loop():
                             )
                         )
 
+
+            perf_after_detector = time.perf_counter()
+            perf_logic_ms = max(
+                0.0,
+                (
+                    perf_after_detector - perf_after_copy
+                ) * 1000.0 - perf_detector_ms,
+            )
+            perf_prev_after_detector = perf_after_detector
+
+            if frame_counter % 30 == 0:
+                print(
+                    f"[PERF] fps={fps:.1f} "
+                    f"periodo={frame_period * 1000.0:.2f}ms "
+                    f"espera_camara={perf_capture_wait_ms:.2f}ms "
+                    f"copia={perf_copy_ms:.2f}ms "
+                    f"detector={perf_detector_ms:.2f}ms "
+                    f"logica={perf_logic_ms:.2f}ms "
+                    f"cola_prev={perf_tail_prev_ms:.2f}ms "
+                    f"estado={state}",
+                    flush=True,
+                )
 
             if detection is not None and frame_counter % 30 == 0:
                 print(
