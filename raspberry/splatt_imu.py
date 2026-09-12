@@ -59,6 +59,8 @@ class SplattIMU:
         self.diag_activo = False
         self.diag_inicio = 0.0
         self.diag_inicio_boottime_ns = 0
+        self.diag_ultimo_inicio_boottime_ns = 0
+        self.diag_ultimo_tipo = ""
         self.diag_vmax = 0.0
         self.diag_jmax = 0.0
         self.diag_j_en_vmax = 0.0
@@ -222,10 +224,18 @@ class SplattIMU:
                 flush=True,
             )
 
+            # En un CONFIRMADO fuerte, el instante del evento
+            # es la muestra que cumple simultaneamente V y J. El inicio del
+            # candidato (70 %) se conserva solo para auditoria.
+            self.diag_ultimo_inicio_boottime_ns = (
+                self.diag_inicio_boottime_ns
+            )
+            self.diag_ultimo_tipo = "CONFIRMADO"
+
             resultado = (
                 vibracion,
                 salto,
-                self.diag_inicio_boottime_ns,
+                sample_boottime_ns,
             )
             self.diag_activo = False
             return resultado
@@ -248,6 +258,18 @@ class SplattIMU:
                     flush=True,
                 )
 
+                self.diag_ultimo_inicio_boottime_ns = (
+                    self.diag_inicio_boottime_ns
+                )
+                self.diag_ultimo_tipo = "CONFIRMADO-VENTANA"
+                self.diag_ultimo_inicio_boottime_ns = (
+                    self.diag_inicio_boottime_ns
+                )
+                self.diag_ultimo_tipo = "CONFIRMADO-DEBIL"
+                self.diag_ultimo_inicio_boottime_ns = (
+                    self.diag_inicio_boottime_ns
+                )
+                self.diag_ultimo_tipo = "CONFIRMADO-RESCATE"
                 self.diag_activo = False
                 return (
                     vmax,
@@ -352,7 +374,13 @@ class SplattIMU:
         # del propio retroceso haga que el ángulo supere el umbral.
         if disparo_detectado is not None:
             evento_boottime_ns = int(disparo_detectado[2])
-            retraso_inicio_ms = (
+            inicio_boottime_ns = int(
+                self.diag_ultimo_inicio_boottime_ns
+            )
+            retraso_inicio_evento_ms = (
+                evento_boottime_ns - inicio_boottime_ns
+            ) / 1_000_000.0
+            retraso_evento_muestra_ms = (
                 int(sample_boottime_ns) - evento_boottime_ns
             ) / 1_000_000.0
             decision = (
@@ -363,9 +391,12 @@ class SplattIMU:
 
             print(
                 f"[IMU-AUDIT] t={t:.6f}s "
-                f"boot_inicio={evento_boottime_ns} "
+                f"tipo={self.diag_ultimo_tipo} "
+                f"boot_inicio={inicio_boottime_ns} "
+                f"boot_evento={evento_boottime_ns} "
                 f"boot_muestra={int(sample_boottime_ns)} "
-                f"dt_inicio={retraso_inicio_ms:.3f}ms "
+                f"dt_inicio_evento={retraso_inicio_evento_ms:.3f}ms "
+                f"dt_evento_muestra={retraso_evento_muestra_ms:.3f}ms "
                 f"angulo={angulo_horizontal:.3f}deg "
                 f"horizontal={int(horizontal_mantenimiento)} "
                 f"decision={decision} "
