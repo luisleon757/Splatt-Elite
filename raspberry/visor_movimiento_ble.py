@@ -916,6 +916,7 @@ def buscar_circulo(
     x2,
     y2,
     reference_global=None,
+    track_mode=False,
 ):
     global detector_perf_last
     x1 = max(0, int(x1))
@@ -929,7 +930,19 @@ def buscar_circulo(
         return None
 
     perf_blur_start = time.perf_counter()
-    filtered = cv2.medianBlur(roi, 5)
+
+    if track_mode:
+        # En TRACK ya conocemos aproximadamente posicion y radio.
+        # Un Gaussian 3x3 es suficiente como prefiltrado y resulta
+        # bastante mas barato que medianBlur 5x5.
+        filtered = cv2.GaussianBlur(roi, (3, 3), 0)
+        hough_min_radius = TRACK_MIN_RADIUS
+        hough_max_radius = TRACK_MAX_RADIUS
+    else:
+        filtered = cv2.medianBlur(roi, 5)
+        hough_min_radius = MIN_RADIUS
+        hough_max_radius = MAX_RADIUS
+
     perf_after_blur = time.perf_counter()
 
     circles = cv2.HoughCircles(
@@ -939,8 +952,8 @@ def buscar_circulo(
         minDist=15,
         param1=80,
         param2=16,
-        minRadius=MIN_RADIUS,
-        maxRadius=MAX_RADIUS,
+        minRadius=hough_min_radius,
+        maxRadius=hough_max_radius,
     )
     perf_after_hough = time.perf_counter()
 
@@ -1853,6 +1866,7 @@ def capture_loop():
                         predicted_x + half,
                         predicted_y + half,
                         reference_global=predicted_reference,
+                        track_mode=True,
                     )
                     perf_detector_ms = (
                         time.perf_counter() - perf_detector_start
