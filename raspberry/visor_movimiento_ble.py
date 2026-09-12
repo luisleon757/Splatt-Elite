@@ -647,7 +647,7 @@ def ble_loop():
 # Cámara
 WIDTH = 1280
 HEIGHT = 800
-CAMERA_FPS = 60
+CAMERA_FPS = 120
 EXPOSURE_US = 3000
 ANALOGUE_GAIN = 3.0
 
@@ -1242,7 +1242,7 @@ def capture_loop():
     trail = deque(maxlen=TRAIL_LENGTH)
 
     # Historial de posiciones para recuperar la puntería anterior al disparo.
-    position_history = deque(maxlen=180)
+    position_history = deque(maxlen=int(CAMERA_FPS * 3))
 
     # Un disparo se mantiene pendiente hasta que la cámara haya entregado
     # un frame posterior a su timestamp. Así sabemos que ya han llegado
@@ -1875,7 +1875,8 @@ def capture_loop():
 
             if detection is not None and frame_counter % 30 == 0:
                 print(
-                    f"[LUZ] interior={detection['inner_mean']:.1f} "
+                    f"[LUZ] fps={fps:.1f} "
+                    f"interior={detection['inner_mean']:.1f} "
                     f"anillo={detection['ring_mean']:.1f} "
                     f"contraste={detection['contrast']:.1f}",
                     flush=True,
