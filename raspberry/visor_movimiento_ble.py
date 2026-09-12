@@ -823,10 +823,42 @@ pending_jpeg_image = None
 pending_jpeg_number = 0
 
 
-def evaluar_circulo(gray_roi, x, y, radius, reference=None):
+# Mascaras precalculadas por radio para evaluar candidatos sin crear
+# tres imagenes del tamano completo del ROI en cada frame.
+_circle_mask_cache = {}
+
+
+def _circle_masks(radius):
+    radius = int(radius)
+
+    cached = _circle_mask_cache.get(radius)
+    if cached is not None:
+        return cached
+
     inner_radius = max(2, int(radius * 0.65))
     ring_inner = max(inner_radius + 1, int(radius * 1.15))
     ring_outer = int(radius * 1.55)
+
+    size = ring_outer * 2 + 1
+    center = (ring_outer, ring_outer)
+
+    inner_mask = np.zeros((size, size), dtype=np.uint8)
+    outer_mask = np.zeros((size, size), dtype=np.uint8)
+    hole_mask = np.zeros((size, size), dtype=np.uint8)
+
+    cv2.circle(inner_mask, center, inner_radius, 255, -1)
+    cv2.circle(outer_mask, center, ring_outer, 255, -1)
+    cv2.circle(hole_mask, center, ring_inner, 255, -1)
+
+    ring_mask = cv2.subtract(outer_mask, hole_mask)
+
+    cached = (ring_outer, inner_mask, ring_mask)
+    _circle_mask_cache[radius] = cached
+    return cached
+
+
+def evaluar_circulo(gray_roi, x, y, radius, reference=None):
+    ring_outer, inner_mask, ring_mask = _circle_masks(radius)
 
     roi_height, roi_width = gray_roi.shape
 
@@ -838,18 +870,14 @@ def evaluar_circulo(gray_roi, x, y, radius, reference=None):
     ):
         return None
 
-    inner_mask = np.zeros_like(gray_roi, dtype=np.uint8)
-    outer_mask = np.zeros_like(gray_roi, dtype=np.uint8)
-    hole_mask = np.zeros_like(gray_roi, dtype=np.uint8)
+    # Solo se procesa el cuadrado minimo que contiene ambos anillos.
+    patch = gray_roi[
+        y - ring_outer:y + ring_outer + 1,
+        x - ring_outer:x + ring_outer + 1,
+    ]
 
-    cv2.circle(inner_mask, (x, y), inner_radius, 255, -1)
-    cv2.circle(outer_mask, (x, y), ring_outer, 255, -1)
-    cv2.circle(hole_mask, (x, y), ring_inner, 255, -1)
-
-    ring_mask = cv2.subtract(outer_mask, hole_mask)
-
-    inner_mean = cv2.mean(gray_roi, mask=inner_mask)[0]
-    ring_mean = cv2.mean(gray_roi, mask=ring_mask)[0]
+    inner_mean = cv2.mean(patch, mask=inner_mask)[0]
+    ring_mean = cv2.mean(patch, mask=ring_mask)[0]
     contrast = ring_mean - inner_mean
 
     if contrast < MIN_CONTRAST:
