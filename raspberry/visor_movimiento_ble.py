@@ -15,7 +15,7 @@ import dbus.mainloop.glib
 import dbus.service
 import numpy as np
 from flask import Flask, Response, jsonify
-from picamera2 import Picamera2
+from picamera2 import MappedArray, Picamera2
 from libcamera import Transform
 from gi.repository import GLib
 from splatt_imu import SplattIMU
@@ -1525,7 +1525,12 @@ def capture_loop():
 
             try:
                 frame_metadata = request.get_metadata()
-                frame = request.make_array("main")
+
+                # YUV420 contiene luminancia + crominancia. Para detectar
+                # la diana solo necesitamos el plano Y. MappedArray evita
+                # copiar todo el buffer YUV; copiamos unicamente 1280x800 Y.
+                with MappedArray(request, "main", write=False) as mapped:
+                    gray = np.copy(mapped.array[:HEIGHT, :WIDTH])
             finally:
                 request.release()
 
@@ -1537,8 +1542,6 @@ def capture_loop():
             perf_copy_ms = (
                 perf_after_copy - perf_after_capture
             ) * 1000.0
-
-            gray = frame[:HEIGHT, :WIDTH]
 
             # SensorTimestamp identifica temporalmente el fotograma
             # en CLOCK_BOOTTIME, el mismo reloj usado ahora por la IMU.
