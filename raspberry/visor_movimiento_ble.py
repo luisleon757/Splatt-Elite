@@ -1337,6 +1337,7 @@ def capture_loop():
 
     fps = 0.0
     previous_frame_time = time.monotonic()
+    previous_sensor_timestamp_ns = None
     perf_prev_after_detector = None
     tracking_started_at = None
 
@@ -1618,6 +1619,22 @@ def capture_loop():
             frame_boottime_ns = frame_metadata.get(
                 "SensorTimestamp"
             )
+
+            if (
+                frame_boottime_ns is not None
+                and previous_sensor_timestamp_ns is not None
+            ):
+                sensor_dt_ms = (
+                    int(frame_boottime_ns)
+                    - int(previous_sensor_timestamp_ns)
+                ) / 1_000_000.0
+            else:
+                sensor_dt_ms = 0.0
+
+            if frame_boottime_ns is not None:
+                previous_sensor_timestamp_ns = int(frame_boottime_ns)
+
+            frame_duration_us = frame_metadata.get("FrameDuration", 0)
 
             frame_time_ms = (
                 int(frame_boottime_ns // 1_000_000)
@@ -2041,6 +2058,8 @@ def capture_loop():
                 print(
                     f"[PERF] fps={fps:.1f} "
                     f"periodo={frame_period * 1000.0:.2f}ms "
+                    f"sensor_dt={sensor_dt_ms:.3f}ms "
+                    f"frame_dur={float(frame_duration_us) / 1000.0:.3f}ms "
                     f"espera_camara={perf_capture_wait_ms:.2f}ms "
                     f"copia={perf_copy_ms:.2f}ms "
                     f"detector={perf_detector_ms:.2f}ms "
