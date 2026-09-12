@@ -648,6 +648,14 @@ def ble_loop():
 WIDTH = 1280
 HEIGHT = 800
 CAMERA_FPS = 120
+
+# Ultimo desglose interno de buscar_circulo(), solo para diagnostico.
+detector_perf_last = {
+    "blur_ms": 0.0,
+    "hough_ms": 0.0,
+    "eval_ms": 0.0,
+    "circles": 0,
+}
 EXPOSURE_US = 3000
 ANALOGUE_GAIN = 3.0
 
@@ -881,6 +889,7 @@ def buscar_circulo(
     y2,
     reference_global=None,
 ):
+    global detector_perf_last
     x1 = max(0, int(x1))
     y1 = max(0, int(y1))
     x2 = min(WIDTH, int(x2))
@@ -891,7 +900,9 @@ def buscar_circulo(
     if roi.size == 0:
         return None
 
+    perf_blur_start = time.perf_counter()
     filtered = cv2.medianBlur(roi, 5)
+    perf_after_blur = time.perf_counter()
 
     circles = cv2.HoughCircles(
         filtered,
@@ -903,8 +914,15 @@ def buscar_circulo(
         minRadius=MIN_RADIUS,
         maxRadius=MAX_RADIUS,
     )
+    perf_after_hough = time.perf_counter()
 
     if circles is None:
+        detector_perf_last = {
+            "blur_ms": (perf_after_blur - perf_blur_start) * 1000.0,
+            "hough_ms": (perf_after_hough - perf_after_blur) * 1000.0,
+            "eval_ms": 0.0,
+            "circles": 0,
+        }
         return None
 
     reference_local = None
@@ -917,6 +935,8 @@ def buscar_circulo(
         )
 
     best = None
+
+    perf_eval_start = time.perf_counter()
 
     for local_x, local_y, radius in np.round(
         circles[0]
@@ -938,6 +958,14 @@ def buscar_circulo(
 
         if best is None or candidate["score"] > best["score"]:
             best = candidate
+
+    perf_after_eval = time.perf_counter()
+    detector_perf_last = {
+        "blur_ms": (perf_after_blur - perf_blur_start) * 1000.0,
+        "hough_ms": (perf_after_hough - perf_after_blur) * 1000.0,
+        "eval_ms": (perf_after_eval - perf_eval_start) * 1000.0,
+        "circles": int(len(circles[0])),
+    }
 
     return best
 
@@ -1923,6 +1951,10 @@ def capture_loop():
                     f"espera_camara={perf_capture_wait_ms:.2f}ms "
                     f"copia={perf_copy_ms:.2f}ms "
                     f"detector={perf_detector_ms:.2f}ms "
+                    f"blur={detector_perf_last['blur_ms']:.2f}ms "
+                    f"hough={detector_perf_last['hough_ms']:.2f}ms "
+                    f"eval={detector_perf_last['eval_ms']:.2f}ms "
+                    f"ncirc={detector_perf_last['circles']} "
                     f"logica={perf_logic_ms:.2f}ms "
                     f"cola_prev={perf_tail_prev_ms:.2f}ms "
                     f"estado={state}",
