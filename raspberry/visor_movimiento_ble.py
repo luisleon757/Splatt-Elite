@@ -647,7 +647,7 @@ def ble_loop():
 # Cámara
 WIDTH = 1280
 HEIGHT = 800
-CAMERA_FPS = 120
+CAMERA_FPS = 90
 
 # Ultimo desglose interno de buscar_circulo(), solo para diagnostico.
 detector_perf_last = {
