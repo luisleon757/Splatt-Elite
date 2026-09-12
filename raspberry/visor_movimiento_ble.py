@@ -702,6 +702,7 @@ SEARCH_WIDTH = 700
 SEARCH_HEIGHT = 500
 REACQUIRE_ROI_SIZE = 360
 TRACK_ROI_SIZE = 180
+TRACK_FAST_ROI_SIZE = 140
 
 # Readquisicion:
 # primero alrededor de la ultima posicion conocida y,
@@ -1642,6 +1643,7 @@ def capture_loop():
             search_rectangle = None
             track_rectangle = None
             perf_detector_ms = 0.0
+            perf_track_roi = 0
 
             if imu_estado == "STANDBY":
                 state = "SEARCH"
@@ -1843,13 +1845,14 @@ def capture_loop():
                     predicted_x = current_x + velocity_x
                     predicted_y = current_y + velocity_y
 
-                    half = TRACK_ROI_SIZE // 2
+                    fast_half = TRACK_FAST_ROI_SIZE // 2
+                    wide_half = TRACK_ROI_SIZE // 2
 
                     track_rectangle = (
-                        int(predicted_x - half),
-                        int(predicted_y - half),
-                        int(predicted_x + half),
-                        int(predicted_y + half),
+                        int(predicted_x - fast_half),
+                        int(predicted_y - fast_half),
+                        int(predicted_x + fast_half),
+                        int(predicted_y + fast_half),
                     )
 
                     predicted_reference = (
@@ -1859,15 +1862,40 @@ def capture_loop():
                     )
 
                     perf_detector_start = time.perf_counter()
+
+                    # Camino normal rapido: ROI mas pequeno alrededor de la
+                    # prediccion. Si no encuentra circulo, repetimos el mismo
+                    # frame con el ROI original de 180 px para no perder
+                    # robustez ante un salto brusco.
                     detection = buscar_circulo(
                         gray,
-                        predicted_x - half,
-                        predicted_y - half,
-                        predicted_x + half,
-                        predicted_y + half,
+                        predicted_x - fast_half,
+                        predicted_y - fast_half,
+                        predicted_x + fast_half,
+                        predicted_y + fast_half,
                         reference_global=predicted_reference,
                         track_mode=True,
                     )
+                    perf_track_roi = TRACK_FAST_ROI_SIZE
+
+                    if detection is None:
+                        detection = buscar_circulo(
+                            gray,
+                            predicted_x - wide_half,
+                            predicted_y - wide_half,
+                            predicted_x + wide_half,
+                            predicted_y + wide_half,
+                            reference_global=predicted_reference,
+                            track_mode=True,
+                        )
+                        perf_track_roi = TRACK_ROI_SIZE
+                        track_rectangle = (
+                            int(predicted_x - wide_half),
+                            int(predicted_y - wide_half),
+                            int(predicted_x + wide_half),
+                            int(predicted_y + wide_half),
+                        )
+
                     perf_detector_ms = (
                         time.perf_counter() - perf_detector_start
                     ) * 1000.0
@@ -2020,6 +2048,7 @@ def capture_loop():
                     f"hough={detector_perf_last['hough_ms']:.2f}ms "
                     f"eval={detector_perf_last['eval_ms']:.2f}ms "
                     f"ncirc={detector_perf_last['circles']} "
+                    f"roi={perf_track_roi} "
                     f"logica={perf_logic_ms:.2f}ms "
                     f"overlay={perf_overlay_copy_ms:.2f}ms "
                     f"unmap={perf_unmap_ms:.2f}ms "
