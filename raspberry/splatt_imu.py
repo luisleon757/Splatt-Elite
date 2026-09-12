@@ -262,14 +262,6 @@ class SplattIMU:
                     self.diag_inicio_boottime_ns
                 )
                 self.diag_ultimo_tipo = "CONFIRMADO-VENTANA"
-                self.diag_ultimo_inicio_boottime_ns = (
-                    self.diag_inicio_boottime_ns
-                )
-                self.diag_ultimo_tipo = "CONFIRMADO-DEBIL"
-                self.diag_ultimo_inicio_boottime_ns = (
-                    self.diag_inicio_boottime_ns
-                )
-                self.diag_ultimo_tipo = "CONFIRMADO-RESCATE"
                 self.diag_activo = False
                 return (
                     vmax,
@@ -290,6 +282,10 @@ class SplattIMU:
                     flush=True,
                 )
 
+                self.diag_ultimo_inicio_boottime_ns = (
+                    self.diag_inicio_boottime_ns
+                )
+                self.diag_ultimo_tipo = "CONFIRMADO-DEBIL"
                 self.diag_activo = False
                 return (
                     vmax,
@@ -317,6 +313,10 @@ class SplattIMU:
                     flush=True,
                 )
 
+                self.diag_ultimo_inicio_boottime_ns = (
+                    self.diag_inicio_boottime_ns
+                )
+                self.diag_ultimo_tipo = "CONFIRMADO-RESCATE"
                 self.diag_activo = False
                 return (
                     vmax,
