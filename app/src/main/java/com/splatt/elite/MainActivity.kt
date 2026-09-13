@@ -129,6 +129,7 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
 
     var localScore by remember { mutableFloatStateOf(0.0f) }
     var isZeroAdjusting by remember { mutableStateOf(false) }
+    var zeroCalibrationShotCaptured by remember { mutableStateOf(false) }
 
     // Zoom and local lists
     var uiZoom by remember { mutableStateOf(1.0f) }
@@ -238,6 +239,22 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
             // Usar la posición histórica asociada al disparo por la Raspberry.
             val finalShotX = status.shotX
             val finalShotY = status.shotY
+
+            // En un centrado nuevo, AJUSTAR CERO parte de X=0/Y=0.
+            // El primer impacto establece automáticamente un cero grueso
+            // que lo coloca en el centro de la diana. A partir de ahí,
+            // las flechas permiten moverlo hasta el agujero real.
+            if (isZeroAdjusting && !zeroCalibrationShotCaptured) {
+                calibX = finalShotX - 160.0f
+                calibY = finalShotY - 120.0f
+                zeroCalibrationShotCaptured = true
+
+                Toast.makeText(
+                    context,
+                    "Impacto de calibracion centrado. Muevelo con las flechas hasta el agujero real",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
 
             // Calculate score locally
             val cx = finalShotX - 160.0f - calibX
@@ -558,10 +575,18 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                 verticalAlignment = Alignment.Bottom
             ) {
                 CalibrationDPad(
-                    onMoveUp = { if (isZeroAdjusting) calibY -= 0.25f },
-                    onMoveDown = { if (isZeroAdjusting) calibY += 0.25f },
-                    onMoveLeft = { if (isZeroAdjusting) calibX -= 0.25f },
-                    onMoveRight = { if (isZeroAdjusting) calibX += 0.25f }
+                    onMoveUp = {
+                        if (isZeroAdjusting && zeroCalibrationShotCaptured) calibY -= 0.25f
+                    },
+                    onMoveDown = {
+                        if (isZeroAdjusting && zeroCalibrationShotCaptured) calibY += 0.25f
+                    },
+                    onMoveLeft = {
+                        if (isZeroAdjusting && zeroCalibrationShotCaptured) calibX -= 0.25f
+                    },
+                    onMoveRight = {
+                        if (isZeroAdjusting && zeroCalibrationShotCaptured) calibX += 0.25f
+                    }
                 )
 
                 Column(
@@ -631,11 +656,18 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
                                             // hasta pulsar GUARDAR CERO.
                                             calibX = 0.0f
                                             calibY = 0.0f
+                                            zeroCalibrationShotCaptured = false
                                             isZeroAdjusting = true
 
                                             Toast.makeText(
                                                 context,
-                                                "Cero X/Y puesto a 0. Haz el impacto y ajustalo con las flechas",
+                                                "Cero X/Y puesto a 0. Haz un disparo de calibracion",
+                                                Toast.LENGTH_LONG
+                                            ).show()
+                                        } else if (!zeroCalibrationShotCaptured) {
+                                            Toast.makeText(
+                                                context,
+                                                "Haz primero un disparo de calibracion",
                                                 Toast.LENGTH_LONG
                                             ).show()
                                         } else {
