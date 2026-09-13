@@ -625,23 +625,33 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
 
                                 Button(
                                     onClick = {
-                                        isZeroAdjusting = !isZeroAdjusting
-
                                         if (!isZeroAdjusting) {
+                                            // Empezar un centrado nuevo desde cero.
+                                            // El cero anterior sigue guardado en preferencias
+                                            // hasta pulsar GUARDAR CERO.
+                                            calibX = 0.0f
+                                            calibY = 0.0f
+                                            isZeroAdjusting = true
+
+                                            Toast.makeText(
+                                                context,
+                                                "Cero X/Y puesto a 0. Haz el impacto y ajustalo con las flechas",
+                                                Toast.LENGTH_LONG
+                                            ).show()
+                                        } else {
+                                            isZeroAdjusting = false
+
                                             prefs.edit()
                                                 .putFloat("calib_x", calibX)
                                                 .putFloat("calib_y", calibY)
                                                 .apply()
-                                        }
 
-                                        Toast.makeText(
-                                            context,
-                                            if (isZeroAdjusting)
-                                                "Ajusta el ultimo impacto con las flechas"
-                                            else
+                                            Toast.makeText(
+                                                context,
                                                 "Cero manual guardado",
-                                            Toast.LENGTH_LONG
-                                        ).show()
+                                                Toast.LENGTH_LONG
+                                            ).show()
+                                        }
                                     },
                                     colors = ButtonDefaults.buttonColors(
                                         containerColor = Color(0xFF6C5CE7),
