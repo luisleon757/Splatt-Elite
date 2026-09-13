@@ -2451,6 +2451,62 @@ def capture_loop():
                 x_interp = x1 + alpha * (x2 - x1)
                 y_interp = y1 + alpha * (y2 - y1)
 
+                # Comparativa experimental:
+                # A = interpolacion actual entre ultimo PRE y primer POST.
+                # B = ultimo frame PRE (P1).
+                # C = extrapolacion hasta T_salida usando exclusivamente
+                #     los dos ultimos frames PRE consecutivos y validos.
+                x_pre_extrap = None
+                y_pre_extrap = None
+                beta_pre = None
+                p0_info = None
+                pre_extrap_reason = "sin_frame_previo"
+
+                historial = list(position_history)
+                p1_index = next(
+                    (
+                        idx
+                        for idx in range(len(historial) - 1, -1, -1)
+                        if historial[idx] is posicion_1
+                    ),
+                    None,
+                )
+
+                if p1_index is not None and p1_index > 0:
+                    posicion_0 = historial[p1_index - 1]
+
+                    if (
+                        posicion_0.get("valid") == 1
+                        and posicion_0.get("boottime_ns") is not None
+                    ):
+                        t0 = int(posicion_0["boottime_ns"])
+                        dt01_ms = (t1 - t0) / 1_000_000.0
+
+                        # A 75 fps esperamos ~13.3-13.9 ms.
+                        # Rechazar saltos grandes evita extrapolar a traves
+                        # de un frame perdido o una deteccion invalida.
+                        if 5.0 <= dt01_ms <= 22.0 and t1 > t0:
+                            x0 = float(posicion_0["x"])
+                            y0 = float(posicion_0["y"])
+                            beta_pre = (
+                                target_boottime_ns - t1
+                            ) / float(t1 - t0)
+
+                            x_pre_extrap = (
+                                x1 + beta_pre * (x1 - x0)
+                            )
+                            y_pre_extrap = (
+                                y1 + beta_pre * (y1 - y0)
+                            )
+                            p0_info = (x0, y0, dt01_ms)
+                            pre_extrap_reason = "ok"
+                        else:
+                            pre_extrap_reason = (
+                                f"dt_pre_pre={dt01_ms:.3f}ms"
+                            )
+                    else:
+                        pre_extrap_reason = "frame_previo_invalido"
+
                 pending_shots.popleft()
 
                 shot_position_valid = True
@@ -2476,6 +2532,30 @@ def capture_loop():
                     f"Pinterp=({x_interp:.3f},{y_interp:.3f})",
                     flush=True,
                 )
+
+                if x_pre_extrap is not None:
+                    x0, y0, dt01_ms = p0_info
+                    print(
+                        f"[CAMARA-COMPARE] DISPARO "
+                        f"{shot_event['numero']} "
+                        f"A=({x_interp:.3f},{y_interp:.3f}) "
+                        f"B=({x1:.3f},{y1:.3f}) "
+                        f"C=({x_pre_extrap:.3f},{y_pre_extrap:.3f}) "
+                        f"P0=({x0:.3f},{y0:.3f}) "
+                        f"dt01={dt01_ms:.3f}ms "
+                        f"beta={beta_pre:.6f}",
+                        flush=True,
+                    )
+                else:
+                    print(
+                        f"[CAMARA-COMPARE] DISPARO "
+                        f"{shot_event['numero']} "
+                        f"A=({x_interp:.3f},{y_interp:.3f}) "
+                        f"B=({x1:.3f},{y1:.3f}) "
+                        f"C=NA "
+                        f"motivo={pre_extrap_reason}",
+                        flush=True,
+                    )
 
                 print(
                     f"[CAMARA] DISPARO {shot_event['numero']} "
