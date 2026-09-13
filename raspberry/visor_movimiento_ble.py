@@ -1,6 +1,7 @@
 import importlib.machinery
 import importlib.util
 import json
+import signal
 import socket
 import struct
 import subprocess
@@ -754,6 +755,7 @@ TRACE_POST_MAX_SECONDS = 10.0
 
 OUTPUT_IMAGE = Path("/home/pi/visor_movimiento_ultimo.jpg")
 LOG_DIR = Path("/home/pi/splatt_logs")
+VIDEO_DIR = Path("/home/pi/splatt_videos")
 CONFIG_FILE = Path("/home/pi/splatt_config.json")
 
 
@@ -783,6 +785,79 @@ def cargar_config_camara():
             "exposure_us": EXPOSURE_US,
             "analogue_gain": ANALOGUE_GAIN,
         }
+
+
+def iniciar_grabacion_punteria():
+    """Graba el visor MJPEG desde que empieza PUNTERIA hasta STANDBY."""
+    VIDEO_DIR.mkdir(parents=True, exist_ok=True)
+
+    video_path = VIDEO_DIR / (
+        "punteria_"
+        + time.strftime("%Y%m%d_%H%M%S")
+        + ".mkv"
+    )
+
+    command = [
+        "/usr/bin/ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-fflags",
+        "+genpts",
+        "-i",
+        "http://127.0.0.1:8000/video",
+        "-c:v",
+        "copy",
+        str(video_path),
+    ]
+
+    try:
+        process = subprocess.Popen(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception as error:
+        print(
+            f"[VIDEO] No se pudo iniciar grabacion: {error}",
+            flush=True,
+        )
+        return None, None
+
+    print(
+        f"[VIDEO] Grabacion iniciada: {video_path}",
+        flush=True,
+    )
+    return process, video_path
+
+
+def detener_grabacion_punteria(process, video_path):
+    if process is None:
+        return
+
+    if process.poll() is None:
+        try:
+            process.send_signal(signal.SIGINT)
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.terminate()
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=2)
+        except Exception as error:
+            print(
+                f"[VIDEO] Error deteniendo grabacion: {error}",
+                flush=True,
+            )
+
+    print(
+        f"[VIDEO] Grabacion finalizada: {video_path}",
+        flush=True,
+    )
 
 
 def guardar_config_camara(exposure_us, analogue_gain):
@@ -1335,6 +1410,9 @@ def capture_loop():
     trace_prev_imu_estado = "STANDBY"
     trace_post_truncated = False
 
+    video_process = None
+    video_path = None
+
     fps = 0.0
     previous_frame_time = time.monotonic()
     previous_sensor_timestamp_ns = None
@@ -1421,6 +1499,9 @@ def capture_loop():
                 trace_shot_boottime_ns = None
                 trace_post_truncated = False
 
+                if video_process is None or video_process.poll() is not None:
+                    video_process, video_path = iniciar_grabacion_punteria()
+
                 print("[TRACE] punteria iniciada", flush=True)
 
             elif (
@@ -1497,6 +1578,18 @@ def capture_loop():
                 trace_disparo.clear()
                 trace_shot_boottime_ns = None
                 trace_post_truncated = False
+
+            if (
+                trace_prev_imu_estado != "STANDBY"
+                and imu_estado == "STANDBY"
+                and video_process is not None
+            ):
+                detener_grabacion_punteria(
+                    video_process,
+                    video_path,
+                )
+                video_process = None
+                video_path = None
 
             trace_prev_imu_estado = imu_estado
             camera_needed = (
@@ -2532,6 +2625,12 @@ def capture_loop():
             solicitar_jpeg(overlay)
 
     finally:
+        if video_process is not None:
+            detener_grabacion_punteria(
+                video_process,
+                video_path,
+            )
+
         if camera_running:
             camera.stop()
         csv_file.close()
