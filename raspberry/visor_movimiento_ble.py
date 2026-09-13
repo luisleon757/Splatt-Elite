@@ -756,6 +756,7 @@ TRACE_POST_MAX_SECONDS = 10.0
 OUTPUT_IMAGE = Path("/home/pi/visor_movimiento_ultimo.jpg")
 LOG_DIR = Path("/home/pi/splatt_logs")
 VIDEO_DIR = Path("/home/pi/splatt_videos")
+AUTO_RECORD_PUNTERIA = False
 CONFIG_FILE = Path("/home/pi/splatt_config.json")
 
 
@@ -1499,7 +1500,13 @@ def capture_loop():
                 trace_shot_boottime_ns = None
                 trace_post_truncated = False
 
-                if video_process is None or video_process.poll() is not None:
+                if (
+                    AUTO_RECORD_PUNTERIA
+                    and (
+                        video_process is None
+                        or video_process.poll() is not None
+                    )
+                ):
                     video_process, video_path = iniciar_grabacion_punteria()
 
                 print("[TRACE] punteria iniciada", flush=True)
