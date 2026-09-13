@@ -261,7 +261,7 @@ fun SplattMainScreen(isLightMode: Boolean, onToggleTheme: () -> Unit) {
             val cy = finalShotY - 120.0f - calibY
             val distPixels = kotlin.math.sqrt((cx * cx) + (cy * cy))
 
-            val pEff = 0.013f // Modificado de 0.011 a 0.013 para que los disparos se abran un poco mÃ¡s
+            val pEff = 0.011f // Escala base, sin rectificacion artificial de amplitud
             val focalLengthPx = lensMm / pEff
             val scaleFactor = (distM * 1000.0f) / focalLengthPx
 

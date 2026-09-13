@@ -80,7 +80,7 @@ fun TargetView(
             val mmToPx = targetRadiusPx / (targetSizeMm / 2.0f)
 
             fun toMm(rx: Float, ry: Float): Offset {
-                val pEff = 0.013f
+                val pEff = 0.011f
                 val focalLengthPx = lensMm / pEff
                 val scaleFactor = (distanceM * 1000.0f) / focalLengthPx
                 val cx = (rx - 160.0f - calibX) * scaleFactor

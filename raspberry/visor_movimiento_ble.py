@@ -2512,9 +2512,12 @@ def capture_loop():
                 shot_position_valid = True
                 app_state = 2
 
+                # Para la prueba de precision se envia B:
+                # ultimo frame valido PRE. Se siguen calculando A y C
+                # y registrando en CAMARA-COMPARE para auditoria.
                 actualizar_ble_status(
-                    shot_x=x_interp,
-                    shot_y=y_interp,
+                    shot_x=x1,
+                    shot_y=y1,
                     shot_ms=int(
                         target_boottime_ns // 1_000_000
                     ),
@@ -2559,8 +2562,8 @@ def capture_loop():
 
                 print(
                     f"[CAMARA] DISPARO {shot_event['numero']} "
-                    f"interpolado X={x_interp:.3f} "
-                    f"Y={y_interp:.3f}",
+                    f"ultimo PRE X={x1:.3f} "
+                    f"Y={y1:.3f}",
                     flush=True,
                 )
 
